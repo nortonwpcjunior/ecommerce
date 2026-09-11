@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+"""Consumidor C1 -- interessado nas categorias A e B.
+
+Fila propria (fila.C1) com dois bindings exatos na exchange topic.
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from common.promocao import ConsumidorPromocoes  # noqa: E402
+
+
+class ConsumidorC1(ConsumidorPromocoes):
+    name = "consumidor_c1"
+    queue = "fila.C1"
+    padroes = ["promocao.categoria.A", "promocao.categoria.B"]
+
+
+if __name__ == "__main__":
+    ConsumidorC1().start()

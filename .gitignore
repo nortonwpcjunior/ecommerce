@@ -1,0 +1,12 @@
+# Chaves PRIVADAS nunca vao para o repositorio.
+# As chaves publicas (*.pub.pem) SAO versionadas, como pede a especificacao.
+**/*.key.pem
+
+# Ambiente virtual e bytecode
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Logs e PIDs gerados pelo run_services.sh (a pasta e recriada na execucao)
+logs/
