@@ -46,7 +46,8 @@ ecommerce-mom/
 ├── ms_promocoes/         ...
 ├── consumidor_c1/        # so keys/ms_promocoes.pub.pem (nao publica)
 ├── consumidor_c2/
-├── run_services.sh
+├── run_services.sh       # atalho Linux/macOS
+├── run_services.ps1      # atalho Windows (PowerShell)
 └── docker-compose.yml
 ```
 
@@ -74,7 +75,7 @@ ecommerce-mom/
 
 ---
 
-## Como rodar
+## Como rodar (Linux / macOS)
 
 ### 1. Broker
 
@@ -123,6 +124,104 @@ Atalho durante o desenvolvimento:
 ./run_services.sh stop
 .venv/bin/python -m ms_principal.main
 ```
+
+---
+
+## Como rodar no Windows (RabbitMQ nativo, sem Docker)
+
+O Docker so e usado para subir o broker. No Windows da para instalar o RabbitMQ
+nativo -- ele roda sobre a maquina virtual do Erlang -- e o resto do projeto
+nao muda: os processos continuam falando com `localhost:5672`.
+
+### 1. Erlang/OTP (instalar ANTES do RabbitMQ)
+
+Baixe o instalador 64-bit em <https://www.erlang.org/downloads> (OTP 26.2.x, a
+faixa suportada pelo RabbitMQ 3.13) e execute **como Administrador** -- e isso
+que grava a variavel `ERLANG_HOME` para a maquina toda. Instalado como usuario
+comum, o servico do RabbitMQ nao encontra o Erlang e nao sobe.
+
+Confira num prompt novo:
+
+```cmd
+echo %ERLANG_HOME%
+erl -version
+```
+
+### 2. RabbitMQ Server
+
+Baixe `rabbitmq-server-3.13.x.exe` em
+<https://github.com/rabbitmq/rabbitmq-server/releases> e execute **como
+Administrador**. O instalador ja registra e inicia o servico do Windows
+`RabbitMQ`. O firewall vai perguntar sobre o `erl.exe` -- libere.
+
+No menu Iniciar, abra **"RabbitMQ Command Prompt (sbin dir)"** como
+Administrador e habilite o painel web:
+
+```cmd
+rabbitmq-plugins enable rabbitmq_management
+rabbitmqctl status
+```
+
+Painel em <http://localhost:15672> (guest/guest -- o usuario `guest` so
+autentica a partir do localhost, que e o caso aqui). Para parar e subir o
+broker: `net stop RabbitMQ` / `net start RabbitMQ`.
+
+### 3. Dependencias e chaves
+
+```powershell
+py -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m tools.gen_keys
+```
+
+### 4. Os 7 processos
+
+```powershell
+.venv\Scripts\python -m ms_estoque.main
+.venv\Scripts\python -m ms_pagamento.main
+.venv\Scripts\python -m ms_entrega.main
+.venv\Scripts\python -m ms_promocoes.main
+.venv\Scripts\python -m consumidor_c1.main
+.venv\Scripts\python -m consumidor_c2.main
+.venv\Scripts\python -m ms_principal.main      # este e a interface
+```
+
+Atalho (o `run_services.sh` e bash; no Windows use o `.ps1`):
+
+```powershell
+.\run_services.ps1 start     # sobe os 6 nao-interativos em background (logs\)
+.\run_services.ps1 logs      # acompanha todos os logs
+.\run_services.ps1 stop
+.venv\Scripts\python -m ms_principal.main
+```
+
+Se o PowerShell bloquear o script por politica de execucao:
+`powershell -ExecutionPolicy Bypass -File .\run_services.ps1 start`.
+
+Duas diferencas do script Windows, ambas por limitacao do `Start-Process`, que
+nao aceita o mesmo arquivo para as duas saidas: o `logging` do Python escreve
+em **stderr**, entao os eventos ficam em `logs\<servico>.log` e a saida solta
+vai para `logs\<servico>.out.log`. E a checagem de PID confere tambem o nome do
+processo, porque o Windows recicla PIDs rapido e um `stop` poderia derrubar
+outro programa.
+
+Variaveis de ambiente no PowerShell usam outra sintaxe. Para forcar recusa de
+pagamento na demonstracao:
+
+```powershell
+$env:TAXA_APROVACAO="0"; .venv\Scripts\python -m ms_pagamento.main
+```
+
+O mesmo vale para `RABBIT_HOST`, `RABBIT_PORT`, `RABBIT_USER` e `RABBIT_PASS`.
+
+### Problemas classicos no Windows
+
+| Sintoma | Causa / solucao |
+|---|---|
+| Servico `RabbitMQ` nao inicia | Erlang instalado **depois** do RabbitMQ, ou fora do modo Administrador. Reinstale o RabbitMQ. |
+| `rabbitmqctl` da erro de autenticacao (cookie) | O servico usa `C:\Windows\System32\config\systemprofile\.erlang.cookie` e a sua sessao usa `%USERPROFILE%\.erlang.cookie`. Copie o primeiro por cima do segundo e reinicie o servico. |
+| Nome de usuario do Windows com acento ou espaco | O RabbitMQ engasga com o caminho do `%APPDATA%`. Defina `RABBITMQ_BASE=C:\RabbitMQ` nas variaveis de ambiente do sistema e reinstale o servico. |
+| `[ERRO] Nao foi possivel conectar ao RabbitMQ` | A mensagem sugere `docker compose up -d`; aqui basta conferir `net start RabbitMQ`. |
 
 ---
 
