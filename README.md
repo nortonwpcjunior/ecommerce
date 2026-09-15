@@ -61,7 +61,8 @@ ecommerce-mom/
            |<--------- pedido.estoque_ok ---------------|
            |<--------- estoque.indisponivel ------------|
            |                                            ^
-           |--------- pedido.excluido ------------------'  (devolve ao estoque)
+           |--------- pedido.excluido ------------------'  (devolve ao estoque
+           |                                                e cancela na janela)
            |
            |            ms_estoque -- pedido.estoque_ok --> ms_pagamento
            |<--------- pagamento.aprovado --------------------|
@@ -84,8 +85,6 @@ docker compose up -d          # RabbitMQ em localhost:5672
                               # painel: http://localhost:15672 (guest/guest)
 ```
 
-Se **ja houver** um RabbitMQ ocupando a 5672 (foi o caso nesta maquina, container
-`sd-rabbitmq`), pule este passo: o projeto usa o broker que estiver no ar.
 Para apontar para outro endereco/porta: `RABBIT_HOST`, `RABBIT_PORT`,
 `RABBIT_USER`, `RABBIT_PASS`.
 
@@ -212,7 +211,8 @@ pagamento na demonstracao:
 $env:TAXA_APROVACAO="0"; .venv\Scripts\python -m ms_pagamento.main
 ```
 
-O mesmo vale para `RABBIT_HOST`, `RABBIT_PORT`, `RABBIT_USER` e `RABBIT_PASS`.
+O mesmo vale para `JANELA_EXCLUSAO`, `RABBIT_HOST`, `RABBIT_PORT`,
+`RABBIT_USER` e `RABBIT_PASS`.
 
 ### Problemas classicos no Windows
 
@@ -241,8 +241,26 @@ pergunta "e se alguem forjar um evento?".
 
 `test_crypto` roda 9 verificacoes de assinatura sem precisar do broker.
 
-Para forcar recusa de pagamento na demonstracao:
-`TAXA_APROVACAO=0 .venv/bin/python -m ms_pagamento.main` (padrao: `0.7`).
+### Variaveis de simulacao
+
+| Variavel | Padrao | Efeito |
+|---|---|---|
+| `TAXA_APROVACAO` | `0.7` | chance de o pagamento ser aprovado; `0` forca recusa, `1` forca aprovacao |
+| `JANELA_EXCLUSAO` | `30` | segundos entre a reserva no estoque e o `pedido.estoque_ok` -- a janela de exclusao |
+| `DELAY_PAGAMENTO` | `5` | segundos que o `ms_pagamento` leva para decidir |
+| `DELAY_ENTREGA` | `5` | segundos que o `ms_entrega` leva ate publicar `pedido.enviado` |
+| `INTERVALO_PROMOCAO` | `8` | segundos entre promocoes |
+
+A `JANELA_EXCLUSAO` e a **janela de exclusao**: o tempo que o usuario tem para
+excluir o pedido pelo menu **antes de ele seguir para o pagamento**. O
+`ms_estoque` reserva os itens na hora, mas so publica o `pedido.estoque_ok` no
+fim da janela -- se o `pedido.excluido` chegar antes disso, os itens voltam ao
+estoque e o pagamento nunca fica sabendo do pedido. Depois da aprovacao do
+pagamento o menu recusa a exclusao. Para uma demonstracao mais folgada:
+
+```bash
+JANELA_EXCLUSAO=60 ./run_services.sh start
+```
 
 ---
 
@@ -300,17 +318,46 @@ estado que `ms_estoque` e `ms_pagamento` ainda mantem em memoria.
 `ms_principal` e a unica origem de pedidos; um `pedidoId` que ele nao criou
 nunca vira um pedido na lista do usuario.
 
-**13. Idempotencia no `ms_estoque` e no `ms_entrega`**: `pedido.criado`
-repetido nao reserva duas vezes, `pagamento.aprovado` repetido nao emite duas
-notas. Necessario porque a entrega do RabbitMQ e at-least-once.
+**13. Nenhum evento ressuscita um pedido CANCELADO.** Se o usuario excluir no
+fim da janela, o `pedido.estoque_ok` pode ter escapado por milissegundos e o
+pagamento sai assim mesmo; se excluir enquanto o pacote ja esta sendo
+preparado, o `pedido.enviado` chega depois. Sem essa guarda, o status que o usuario ve seria sobrescrito logo apos
+ele ter visto "CANCELADO". O evento e registrado como "chegou tarde" e ignorado.
 
-**14. As quantidades em estoque vivem APENAS no `ms_estoque`.**
+**14. A janela de exclusao fica no Estoque, e nao no Pagamento.** Nao existe
+evento de estorno no sistema: cancelar depois da cobranca deixaria o pedido
+"cancelado, mas pago". A janela foi entao movida para ANTES do pagamento -- e o
+Estoque e o UNICO processo que a Figura 1 autoriza a consumir `pedido.excluido`,
+entao e nele que ela cabe sem inventar binding novo. Ele reserva os itens ao
+receber `pedido.criado`, espera `JANELA_EXCLUSAO` e so entao publica
+`pedido.estoque_ok`. Excluiu dentro da janela: os itens voltam, o
+`pedido.estoque_ok` nunca sai e o `ms_pagamento` sequer fica sabendo do pedido.
+Depois que o pagamento e aprovado, o menu recusa a exclusao.
+
+**15. A janela usa `call_later`, nao `time.sleep`.** O `ms_estoque` precisa
+ouvir o `pedido.excluido` durante a espera. Com `prefetch_count=1` e um `sleep`
+dentro do callback, o broker nao entrega um segundo evento enquanto o atual nao
+e confirmado: o cancelamento ficaria parado na fila e chegaria sempre tarde
+demais. Entao o handler so AGENDA a liberacao com
+`conexao.call_later(JANELA_EXCLUSAO, ...)` e retorna -- o pika dispara o timer
+dentro do proprio `start_consuming()`, na mesma thread, com a fila livre. O
+preco e confirmar o `pedido.criado` antes de liberar: derrubar o `ms_estoque` no
+meio da janela perde a liberacao pendente (o pedido fica "aguardando estoque" e
+o usuario ainda pode exclui-lo para devolver a reserva). Segurar a mensagem sem
+confirmar traria de volta exatamente o problema que a janela resolve.
+
+**16. Idempotencia no `ms_estoque` e no `ms_entrega`**: `pedido.criado`
+repetido nao reserva duas vezes (nem abre uma segunda janela),
+`pagamento.aprovado` repetido nao emite duas notas. Necessario porque a entrega
+do RabbitMQ e at-least-once.
+
+**17. As quantidades em estoque vivem APENAS no `ms_estoque`.**
 `common/catalogo.py` tem so os dados cadastrais do produto -- e uma tabela de
 referencia carregada localmente, como um arquivo de configuracao, nao uma
 chamada entre processos. Por isso o menu nao mostra saldo: nao ha como
 consultar sem chamada direta, que o enunciado proibe.
 
-**15. Consumidores de promocoes usam `publica=False`** e nao tem chave
+**18. Consumidores de promocoes usam `publica=False`** e nao tem chave
 privada. Nao podem publicar nada nem falar com microsservico algum, so com o
 broker.
 
