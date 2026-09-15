@@ -21,6 +21,26 @@ Nenhum processo chama outro diretamente: toda a comunicacao passa pelo RabbitMQ.
 | `consumidor_c2` | `fila.C2` | `promocao.categoria.*` | — |
 
 Exchanges: **`eCommerce`** (direct) e **`Promocoes`** (topic). Nenhuma fanout.
+Cada consumidor declara a SUA fila (`durable=True`) e faz os proprios bindings.
+
+C1 usa dois bindings exatos (`promocao.categoria.A` e `.B`); C2 usa um unico
+binding com curinga `*`, que casa exatamente uma palavra e portanto cobre
+qualquer categoria, inclusive as que venham a existir.
+
+## Envelope do evento
+
+```json
+{
+  "producer":  "ms_estoque",
+  "event":     "pedido.estoque_ok",
+  "timestamp": "2026-09-11T13:04:55+00:00",
+  "payload":   { "pedidoId": "PED-A3F1-001", "itens": [], "total": 0.0 },
+  "signature": "<base64>"
+}
+```
+
+A assinatura cobre os **quatro** primeiros campos, nao apenas o `payload`
+(ver "Decisoes de projeto", item 1).
 
 ## Estrutura
 
@@ -46,7 +66,7 @@ ecommerce-mom/
 ├── ms_promocoes/         ...
 ├── consumidor_c1/        # so keys/ms_promocoes.pub.pem (nao publica)
 ├── consumidor_c2/
-├── run_services.sh       # atalho Linux/macOS
+├── run_services.sh       # atalho bash (Linux/macOS)
 ├── run_services.ps1      # atalho Windows (PowerShell)
 └── docker-compose.yml
 ```
@@ -58,11 +78,10 @@ ecommerce-mom/
            |  (menu no terminal)
       ms_principal ---- pedido.criado -----------> ms_estoque
            |                                            |
-           |<--------- pedido.estoque_ok ---------------|
+           |<--------- pedido.estoque_ok ---------------|  (reserva os itens)
            |<--------- estoque.indisponivel ------------|
            |                                            ^
-           |--------- pedido.excluido ------------------'  (devolve ao estoque
-           |                                                e cancela na janela)
+           |--------- pedido.excluido ------------------'  (devolve a reserva)
            |
            |            ms_estoque -- pedido.estoque_ok --> ms_pagamento
            |<--------- pagamento.aprovado --------------------|
@@ -73,6 +92,10 @@ ecommerce-mom/
 
     ms_promocoes -- promocao.categoria.X --> [C1: A e B]  [C2: *]
 ```
+
+O `pedido.excluido` sai em tres situacoes: o usuario exclui pelo menu, o
+`ms_estoque` avisa `estoque.indisponivel`, ou o `ms_pagamento` recusa. Nos dois
+ultimos casos quem publica e o `ms_principal`, ao consumir o evento.
 
 ---
 
@@ -197,6 +220,18 @@ Atalho (o `run_services.sh` e bash; no Windows use o `.ps1`):
 Se o PowerShell bloquear o script por politica de execucao:
 `powershell -ExecutionPolicy Bypass -File .\run_services.ps1 start`.
 
+O script nao exige a venv dentro do projeto. Ele procura o interpretador nesta
+ordem: `-Python <caminho>`, a variavel `PYTHON_EXE`, `.venv\Scripts\python.exe`,
+a venv ativada (`VIRTUAL_ENV`) e, por ultimo, o `python.exe` do PATH. Antes de
+subir qualquer processo ele testa `import pika, cryptography` no interpretador
+escolhido -- sem essa checagem, um Python errado subiria os 6 processos, todos
+morreriam no import e o erro ficaria escondido nas janelas ocultas. Para apontar
+para outra venv:
+
+```powershell
+.\run_services.ps1 start -Python C:\caminho\da\venv\Scripts\python.exe
+```
+
 Duas diferencas do script Windows, ambas por limitacao do `Start-Process`, que
 nao aceita o mesmo arquivo para as duas saidas: o `logging` do Python escreve
 em **stderr**, entao os eventos ficam em `logs\<servico>.log` e a saida solta
@@ -211,7 +246,7 @@ pagamento na demonstracao:
 $env:TAXA_APROVACAO="0"; .venv\Scripts\python -m ms_pagamento.main
 ```
 
-O mesmo vale para `JANELA_EXCLUSAO`, `RABBIT_HOST`, `RABBIT_PORT`,
+O mesmo vale para `INTERVALO_PROMOCAO`, `RABBIT_HOST`, `RABBIT_PORT`,
 `RABBIT_USER` e `RABBIT_PASS`.
 
 ### Problemas classicos no Windows
@@ -233,34 +268,36 @@ O mesmo vale para `JANELA_EXCLUSAO`, `RABBIT_HOST`, `RABBIT_PORT`,
 .venv/bin/python -m tools.test_assinatura_invalida # prova que evento forjado e descartado
 ```
 
+`test_crypto` roda 9 verificacoes de assinatura sem precisar do broker
+(payload adulterado, evento trocado, timestamp remarcado, produtor falso,
+produtor sem chave, envelope sem assinatura e round-trip JSON).
+
 `test_assinatura_invalida` publica quatro eventos -- legitimo, payload
 adulterado, assinado com a chave de outro servico, e um evento substituido
 (payload legitimo de `pedido.estoque_ok` republicado como
 `pagamento.aprovado`) -- e apenas o primeiro e processado. Bom roteiro para a
-pergunta "e se alguem forjar um evento?".
+pergunta "e se alguem forjar um evento?". Exige `ms_estoque` e `ms_entrega` no ar.
 
-`test_crypto` roda 9 verificacoes de assinatura sem precisar do broker.
+`smoke_test` sobe um consumidor `ms_principal` embutido, publica um
+`pedido.criado` e espera o status chegar a um estado terminal (`ENVIADO`,
+`CANCELADO_SEM_ESTOQUE` ou `CANCELADO_PAGAMENTO`), com timeout de 30s.
 
 ### Variaveis de simulacao
 
 | Variavel | Padrao | Efeito |
 |---|---|---|
 | `TAXA_APROVACAO` | `0.7` | chance de o pagamento ser aprovado; `0` forca recusa, `1` forca aprovacao |
-| `JANELA_EXCLUSAO` | `30` | segundos entre a reserva no estoque e o `pedido.estoque_ok` -- a janela de exclusao |
-| `DELAY_PAGAMENTO` | `5` | segundos que o `ms_pagamento` leva para decidir |
-| `DELAY_ENTREGA` | `5` | segundos que o `ms_entrega` leva ate publicar `pedido.enviado` |
 | `INTERVALO_PROMOCAO` | `8` | segundos entre promocoes |
+| `RABBIT_HOST` / `RABBIT_PORT` | `localhost` / `5672` | endereco do broker |
+| `RABBIT_USER` / `RABBIT_PASS` | `guest` / `guest` | credenciais do broker |
 
-A `JANELA_EXCLUSAO` e a **janela de exclusao**: o tempo que o usuario tem para
-excluir o pedido pelo menu **antes de ele seguir para o pagamento**. O
-`ms_estoque` reserva os itens na hora, mas so publica o `pedido.estoque_ok` no
-fim da janela -- se o `pedido.excluido` chegar antes disso, os itens voltam ao
-estoque e o pagamento nunca fica sabendo do pedido. Depois da aprovacao do
-pagamento o menu recusa a exclusao. Para uma demonstracao mais folgada:
+A latencia do pagamento e da emissao da nota e fixa (`time.sleep(1)` em
+`ms_pagamento` e `ms_entrega`), o suficiente para os estados intermediarios
+aparecerem no menu durante a demonstracao.
 
-```bash
-JANELA_EXCLUSAO=60 ./run_services.sh start
-```
+Estoque inicial (em `ms_estoque/main.py`): `P1=10 P2=5 P3=0 P4=3 P5=7 P6=2`.
+O `P3` comeca zerado de proposito -- e o caminho mais rapido para demonstrar
+`estoque.indisponivel`.
 
 ---
 
@@ -284,82 +321,72 @@ tambem nos logs de publicacao, para conferencia na demonstracao.
 
 **4. A assinatura e verificada ANTES de processar**, em
 `Microservice._ao_receber`. Assinatura invalida -> `basic_nack(requeue=False)`:
-o evento e descartado e nunca chega ao `handle()`.
+o evento e descartado e nunca chega ao `handle()`. O mesmo vale para corpo que
+nao e JSON valido ou envelope sem os campos obrigatorios.
 
 **5. A routing key da entrega tem de casar com o `event` assinado.** Defesa
 extra: um envelope valido reencaminhado para outra fila e recusado.
 
-**6. `heartbeat=0` na conexao de publicacao.** O pika so processa heartbeats
+**6. Excecao dentro do `handle()` tambem descarta o evento**, sem requeue. Com
+requeue o mesmo evento voltaria em loop e travaria a fila -- o erro fica no log
+(`log.exception`) e a fila segue andando.
+
+**7. `heartbeat=0` na conexao de publicacao.** O pika so processa heartbeats
 quando o codigo chama a biblioteca, e a thread do menu fica parada em
 `input()`. Com heartbeat ligado, o broker derruba a conexao por timeout e o
 proximo pedido falha com `StreamLostError` -- acontece em ~2 minutos de menu
 aberto. A conexao do consumidor mantem `heartbeat=60`, porque ela nunca fica
 ociosa dentro da biblioteca.
 
-**7. O `Publisher` reconecta** se a conexao propria cair. Quando o canal e
+**8. O `Publisher` reconecta** se a conexao propria cair. Quando o canal e
 emprestado do consumidor, a excecao sobe: quem reconecta e o dono do canal.
 
-**8. O `ms_principal` usa DUAS conexoes.** O `BlockingConnection` do pika nao e
+**9. O `ms_principal` usa DUAS conexoes.** O `BlockingConnection` do pika nao e
 thread-safe. A thread do consumidor usa a conexao de `Microservice`; a thread
 do menu usa um `Publisher` com conexao propria. E publicar sempre FORA do
 lock, para nao prender a thread do menu durante a ida ao broker.
 
-**9. `prefetch_count=1`**: um evento por vez por consumidor, ordem de
-processamento previsivel.
+**10. `prefetch_count=1`**: um evento por vez por consumidor, ordem de
+processamento previsivel. E a razao de o `ms_estoque` nao precisar de `Lock`:
+os handlers nunca rodam em paralelo la.
 
-**10. Filas duraveis e mensagens persistentes** (`delivery_mode=2`): derrubar
+**11. Filas duraveis e mensagens persistentes** (`delivery_mode=2`): derrubar
 um microsservico nao perde eventos, ele reprocessa ao voltar.
 
-**11. O ID do pedido leva um sufixo de sessao** (`PED-A3F1-001`). Sem isso,
+**12. O ID do pedido leva um sufixo de sessao** (`PED-A3F1-001`). Sem isso,
 reiniciar o `ms_principal` reinicia o contador em 1 e os IDs colidem com o
 estado que `ms_estoque` e `ms_pagamento` ainda mantem em memoria.
 
-**12. Evento para pedido desconhecido e registrado e ignorado.** O
+**13. Evento para pedido desconhecido e registrado e ignorado.** O
 `ms_principal` e a unica origem de pedidos; um `pedidoId` que ele nao criou
 nunca vira um pedido na lista do usuario.
 
-**13. Nenhum evento ressuscita um pedido CANCELADO.** Se o usuario excluir no
-fim da janela, o `pedido.estoque_ok` pode ter escapado por milissegundos e o
-pagamento sai assim mesmo; se excluir enquanto o pacote ja esta sendo
-preparado, o `pedido.enviado` chega depois. Sem essa guarda, o status que o usuario ve seria sobrescrito logo apos
-ele ter visto "CANCELADO". O evento e registrado como "chegou tarde" e ignorado.
+**14. Idempotencia no `ms_estoque` e no `ms_entrega`**: `pedido.criado`
+repetido nao reserva duas vezes, `pagamento.aprovado` repetido nao emite duas
+notas. Necessario porque a entrega do RabbitMQ e at-least-once.
 
-**14. A janela de exclusao fica no Estoque, e nao no Pagamento.** Nao existe
-evento de estorno no sistema: cancelar depois da cobranca deixaria o pedido
-"cancelado, mas pago". A janela foi entao movida para ANTES do pagamento -- e o
-Estoque e o UNICO processo que a Figura 1 autoriza a consumir `pedido.excluido`,
-entao e nele que ela cabe sem inventar binding novo. Ele reserva os itens ao
-receber `pedido.criado`, espera `JANELA_EXCLUSAO` e so entao publica
-`pedido.estoque_ok`. Excluiu dentro da janela: os itens voltam, o
-`pedido.estoque_ok` nunca sai e o `ms_pagamento` sequer fica sabendo do pedido.
-Depois que o pagamento e aprovado, o menu recusa a exclusao.
-
-**15. A janela usa `call_later`, nao `time.sleep`.** O `ms_estoque` precisa
-ouvir o `pedido.excluido` durante a espera. Com `prefetch_count=1` e um `sleep`
-dentro do callback, o broker nao entrega um segundo evento enquanto o atual nao
-e confirmado: o cancelamento ficaria parado na fila e chegaria sempre tarde
-demais. Entao o handler so AGENDA a liberacao com
-`conexao.call_later(JANELA_EXCLUSAO, ...)` e retorna -- o pika dispara o timer
-dentro do proprio `start_consuming()`, na mesma thread, com a fila livre. O
-preco e confirmar o `pedido.criado` antes de liberar: derrubar o `ms_estoque` no
-meio da janela perde a liberacao pendente (o pedido fica "aguardando estoque" e
-o usuario ainda pode exclui-lo para devolver a reserva). Segurar a mensagem sem
-confirmar traria de volta exatamente o problema que a janela resolve.
-
-**16. Idempotencia no `ms_estoque` e no `ms_entrega`**: `pedido.criado`
-repetido nao reserva duas vezes (nem abre uma segunda janela),
-`pagamento.aprovado` repetido nao emite duas notas. Necessario porque a entrega
-do RabbitMQ e at-least-once.
-
-**17. As quantidades em estoque vivem APENAS no `ms_estoque`.**
+**15. As quantidades em estoque vivem APENAS no `ms_estoque`.**
 `common/catalogo.py` tem so os dados cadastrais do produto -- e uma tabela de
 referencia carregada localmente, como um arquivo de configuracao, nao uma
 chamada entre processos. Por isso o menu nao mostra saldo: nao ha como
 consultar sem chamada direta, que o enunciado proibe.
 
-**18. Consumidores de promocoes usam `publica=False`** e nao tem chave
+**16. Consumidores de promocoes usam `publica=False`** e nao tem chave
 privada. Nao podem publicar nada nem falar com microsservico algum, so com o
 broker.
+
+## Limitacoes conhecidas
+
+- **A exclusao pelo usuario nao e coordenada com o pagamento.** O menu recusa
+  excluir um pedido ja `ENVIADO` ou ja cancelado, mas aceita excluir um pedido
+  com pagamento aprovado: o `pedido.excluido` devolve a reserva no estoque e
+  nao existe evento de estorno, entao o pedido fica "cancelado, mas pago".
+- **Eventos que chegam depois do cancelamento sobrescrevem o status.** Se o
+  usuario excluir e um `pagamento.aprovado` ou `pedido.enviado` ja estiver a
+  caminho, o status exibido deixa de ser "CANCELADO".
+- O estado dos tres servicos com memoria (`ms_principal`, `ms_estoque`,
+  `ms_entrega`) vive em RAM: reiniciar o processo zera pedidos, reservas e
+  notas emitidas.
 
 ## Observacoes
 
