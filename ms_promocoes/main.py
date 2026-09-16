@@ -30,7 +30,7 @@ DESCONTOS = [5, 10, 15, 20, 25, 30, 40, 50]
 def main():
     configurar_log(NOME)
     publisher = Publisher(NOME)
-    log.info("publicando em %s a cada %ds (Ctrl+C para sair)", EX_PROMOCOES, INTERVALO)
+    log.info(f"publicando em {EX_PROMOCOES} a cada {INTERVALO}s (Ctrl+C para sair)")
 
     try:
         while True:
@@ -39,10 +39,9 @@ def main():
             desconto = random.choice(DESCONTOS)
             preco_final = round(produto["preco"] * (1 - desconto / 100.0), 2)
 
-            routing_key = "%s.%s" % ("promocao.categoria", produto["categoria"])
-            log.info("%s: %s com %d%% OFF (R$ %.2f -> R$ %.2f)",
-                     routing_key, produto["nome"], desconto,
-                     produto["preco"], preco_final)
+            routing_key = f"promocao.categoria.{produto['categoria']}"
+            log.info(f"{routing_key}: {produto['nome']} com {desconto}% OFF "
+                     f"(R$ {produto['preco']:.2f} -> R$ {preco_final:.2f})")
 
             publisher.publish(EX_PROMOCOES, routing_key, {
                 "produtoId": produto_id,

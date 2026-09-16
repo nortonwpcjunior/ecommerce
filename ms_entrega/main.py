@@ -42,18 +42,18 @@ class MsEntrega(Microservice):
 
         # Idempotencia: nao emitir duas notas para o mesmo pedido.
         if pedido_id in self._emitidas:
-            log.info("nota de %s ja emitida -- ignorando duplicata", pedido_id)
+            log.info(f"nota de {pedido_id} ja emitida -- ignorando duplicata")
             return
 
         self._proxima_nota += 1
-        nota = "NF-%d" % self._proxima_nota
-        log.info("emitindo nota fiscal %s para %s...", nota, pedido_id)
+        nota = f"NF-{self._proxima_nota}"
+        log.info(f"emitindo nota fiscal {nota} para {pedido_id}...")
         time.sleep(1)  # simula emissao da nota e preparacao do pacote
 
-        rastreio = "BR%09d" % random.randint(0, 999999999)
+        rastreio = f"BR{random.randint(0, 999999999):09d}"
         transportadora = random.choice(TRANSPORTADORAS)
         self._emitidas.add(pedido_id)
-        log.info("despachado via %s (rastreio %s)", transportadora, rastreio)
+        log.info(f"despachado via {transportadora} (rastreio {rastreio})")
 
         self.publish(EX_ECOMMERCE, "pedido.enviado", {
             "pedidoId": pedido_id,

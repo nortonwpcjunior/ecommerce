@@ -24,11 +24,7 @@ class ConsumidorPromocoes(Microservice):
 
     def handle(self, event, payload):
         log.info(
-            "%s | %s (cat %s): %d%% OFF  R$ %.2f -> R$ %.2f",
-            event,
-            payload["nome"],
-            payload["categoria"],
-            payload["descontoPct"],
-            payload["precoOriginal"],
-            payload["precoPromocional"],
+            f"{event} | {payload['nome']} (cat {payload['categoria']}): "
+            f"{payload['descontoPct']}% OFF  "
+            f"R$ {payload['precoOriginal']:.2f} -> R$ {payload['precoPromocional']:.2f}"
         )

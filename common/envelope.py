@@ -58,5 +58,5 @@ class Envelope:
         conhecidos = {f.name for f in fields(cls)}
         faltando = conhecidos - dados.keys()
         if faltando:
-            raise ValueError("envelope sem os campos: %s" % ", ".join(sorted(faltando)))
+            raise ValueError(f"envelope sem os campos: {', '.join(sorted(faltando))}")
         return cls(**{k: v for k, v in dados.items() if k in conhecidos})

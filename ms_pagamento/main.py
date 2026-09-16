@@ -43,12 +43,12 @@ class MsPagamento(Microservice):
         pedido_id = payload["pedidoId"]
         valor = payload.get("total", 0.0)
 
-        log.info("processando pagamento de %s (R$ %.2f)...", pedido_id, valor)
+        log.info(f"processando pagamento de {pedido_id} (R$ {valor:.2f})...")
         time.sleep(1)  # simula latencia da operadora
 
         if random.random() < TAXA_APROVACAO:
-            autorizacao = "AUT-%06d" % random.randint(0, 999999)
-            log.info("APROVADO (%s)", autorizacao)
+            autorizacao = f"AUT-{random.randint(0, 999999):06d}"
+            log.info(f"APROVADO ({autorizacao})")
             self.publish(EX_ECOMMERCE, "pagamento.aprovado", {
                 "pedidoId": pedido_id,
                 "valor": valor,
@@ -57,7 +57,7 @@ class MsPagamento(Microservice):
             })
         else:
             motivo = random.choice(MOTIVOS_RECUSA)
-            log.info("RECUSADO (%s)", motivo)
+            log.info(f"RECUSADO ({motivo})")
             self.publish(EX_ECOMMERCE, "pagamento.recusado", {
                 "pedidoId": pedido_id,
                 "valor": valor,

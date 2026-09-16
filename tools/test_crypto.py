@@ -18,7 +18,7 @@ TS = "2026-09-11T12:00:00+00:00"
 
 
 def assinar(nome_servico, event, payload, timestamp=TS):
-    signer = Signer(load_private(ROOT / nome_servico / "keys" / ("%s.key.pem" % nome_servico)))
+    signer = Signer(load_private(ROOT / nome_servico / "keys" / f"{nome_servico}.key.pem"))
     envelope = Envelope(producer=nome_servico, event=event, timestamp=timestamp,
                         payload=payload)
     envelope.signature = signer.sign(envelope.dados_assinados())
@@ -39,15 +39,15 @@ def main():
     payload = {"pedidoId": "PED-0001", "itens": [{"produtoId": "P1", "quantidade": 2}]}
 
     legitimo = assinar("ms_principal", "pedido.criado", payload)
-    print("assinados : %s" % legitimo.dados_assinados().decode())
-    print("sha256    : %s" % sha256_hex(legitimo.dados_assinados()))
-    print("assinatura: %s...\n" % legitimo.signature[:44])
+    print(f"assinados : {legitimo.dados_assinados().decode()}")
+    print(f"sha256    : {sha256_hex(legitimo.dados_assinados())}")
+    print(f"assinatura: {legitimo.signature[:44]}...\n")
 
     resultados = []
 
     def checar(rotulo, condicao):
         resultados.append(condicao)
-        print("%-52s %s" % (rotulo, "OK" if condicao else "FALHOU"))
+        print(f"{rotulo:<52} {'OK' if condicao else 'FALHOU'}")
 
     checar("1. assinatura legitima e aceita", passa(verifier, legitimo))
 
@@ -82,7 +82,7 @@ def main():
     checar("9. e continua valido apos o round-trip", passa(verifier, volta))
 
     ok = all(resultados)
-    print("\n%s" % ("todos os testes passaram" if ok else "ALGUM TESTE FALHOU"))
+    print(f"\n{'todos os testes passaram' if ok else 'ALGUM TESTE FALHOU'}")
     sys.exit(0 if ok else 1)
 
 

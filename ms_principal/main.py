@@ -25,8 +25,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from common.catalogo import PRODUTOS  # noqa: E402
-from common.service import EX_ECOMMERCE, Microservice, Publisher  # noqa: E402
+from common.catalogo import PRODUTOS
+from common.service import EX_ECOMMERCE, Microservice, Publisher
 
 NOME = "ms_principal"
 log = logging.getLogger(NOME)
@@ -59,7 +59,7 @@ class PedidoStore:
     def novo_id(self) -> str:
         with self._lock:
             self._contador += 1
-            return "PED-%s-%03d" % (SESSAO, self._contador)
+            return f"PED-{SESSAO}-{self._contador:03d}"
 
     def registrar(self, pedido_id, cliente, itens, total):
         with self._lock:
@@ -119,8 +119,8 @@ class MsPrincipal(Microservice):
         pedido_id = payload["pedidoId"]
 
         if STORE.status_de(pedido_id) is None:
-            log.warning("evento %s para pedido desconhecido %s -- ignorado",
-                        event, pedido_id)
+            log.warning(f"evento {event} para pedido desconhecido {pedido_id} "
+                        "-- ignorado")
             return
 
         cancelar_com = None
@@ -135,7 +135,7 @@ class MsPrincipal(Microservice):
 
         elif event == "pagamento.aprovado":
             STORE.atualizar(pedido_id, "PAGAMENTO_APROVADO",
-                            "autorizacao %s" % payload.get("autorizacao", "?"))
+                            f"autorizacao {payload.get('autorizacao', '?')}")
 
         elif event == "pagamento.recusado":
             motivo = payload.get("motivo", "pagamento recusado")
@@ -143,11 +143,12 @@ class MsPrincipal(Microservice):
             cancelar_com = motivo
 
         elif event == "pedido.enviado":
-            STORE.atualizar(pedido_id, "ENVIADO", "nota %s, rastreio %s" % (
-                payload.get("notaFiscal", "?"), payload.get("rastreio", "?")))
+            STORE.atualizar(pedido_id, "ENVIADO",
+                            f"nota {payload.get('notaFiscal', '?')}, "
+                            f"rastreio {payload.get('rastreio', '?')}")
 
-        log.info("pedido %s -> %s", pedido_id,
-                 STATUS.get(STORE.status_de(pedido_id), "?"))
+        log.info(f"pedido {pedido_id} -> "
+                 f"{STATUS.get(STORE.status_de(pedido_id), '?')}")
 
         # Produto indisponivel ou pagamento recusado: o Principal publica
         # pedido.excluido para que o Estoque devolva a reserva.
@@ -178,10 +179,10 @@ def ler(prompt: str):
 
 def mostrar_produtos():
     print("\n--- Produtos ---")
-    print("%-5s %-22s %-10s %12s" % ("ID", "PRODUTO", "CATEGORIA", "PRECO"))
+    print(f"{'ID':<5} {'PRODUTO':<22} {'CATEGORIA':<10} {'PRECO':>12}")
     for pid, p in PRODUTOS.items():
-        print("%-5s %-22s %-10s %12s"
-              % (pid, p["nome"], p["categoria"], "R$ %.2f" % p["preco"]))
+        preco = f"R$ {p['preco']:.2f}"
+        print(f"{pid:<5} {p['nome']:<22} {p['categoria']:<10} {preco:>12}")
     print("(o saldo em estoque vive apenas no ms_estoque e nao pode ser"
           "\n consultado daqui: nao ha chamadas diretas entre processos)")
 
@@ -197,7 +198,7 @@ def ler_itens():
         partes = entrada.split()
         produto_id = partes[0].upper()
         if produto_id not in PRODUTOS:
-            print("  produto inexistente: %s" % produto_id)
+            print(f"  produto inexistente: {produto_id}")
             continue
         try:
             qtd = int(partes[1]) if len(partes) > 1 else 1
@@ -208,7 +209,7 @@ def ler_itens():
             print("  quantidade deve ser >= 1")
             continue
         itens[produto_id] = itens.get(produto_id, 0) + qtd
-        print("  + %dx %s" % (qtd, PRODUTOS[produto_id]["nome"]))
+        print(f"  + {qtd}x {PRODUTOS[produto_id]['nome']}")
     return [{"produtoId": pid, "quantidade": qtd} for pid, qtd in itens.items()]
 
 
@@ -226,7 +227,7 @@ def realizar_pedido(publisher, cliente):
     # Registra ANTES de publicar: a resposta pode voltar antes do print.
     STORE.registrar(pedido_id, cliente, itens, total)
 
-    print("\nPedido %s criado -- total R$ %.2f" % (pedido_id, total))
+    print(f"\nPedido {pedido_id} criado -- total R$ {total:.2f}")
     publisher.publish(EX_ECOMMERCE, "pedido.criado", {
         "pedidoId": pedido_id,
         "cliente": cliente,
@@ -243,13 +244,12 @@ def consultar_pedidos():
     print("\n--- Meus pedidos ---")
     for pedido_id, dados in pedidos:
         resumo = ", ".join(
-            "%dx %s" % (i["quantidade"], i["produtoId"]) for i in dados["itens"]
+            f"{i['quantidade']}x {i['produtoId']}" for i in dados["itens"]
         ) or "-"
-        print("%s  R$ %8.2f  %-14s %s"
-              % (pedido_id, dados["total"], resumo,
-                 STATUS.get(dados["status"], dados["status"])))
+        rotulo = STATUS.get(dados["status"], dados["status"])
+        print(f"{pedido_id}  R$ {dados['total']:8.2f}  {resumo:<14} {rotulo}")
         if dados["detalhe"]:
-            print("                %s" % dados["detalhe"])
+            print(f"                {dados['detalhe']}")
 
 
 def excluir_pedido(publisher):
@@ -262,13 +262,13 @@ def excluir_pedido(publisher):
     status = STORE.status_de(pedido_id)
 
     if status is None:
-        print("Pedido nao encontrado: %s" % pedido_id)
+        print(f"Pedido nao encontrado: {pedido_id}")
         return
     if status.startswith("CANCELADO"):
-        print("Pedido %s ja esta cancelado." % pedido_id)
+        print(f"Pedido {pedido_id} ja esta cancelado.")
         return
     if status == "ENVIADO":
-        print("Pedido %s ja foi enviado e nao pode ser excluido." % pedido_id)
+        print(f"Pedido {pedido_id} ja foi enviado e nao pode ser excluido.")
         return
 
     STORE.atualizar(pedido_id, "CANCELADO_USUARIO", "excluido pelo usuario")
@@ -277,7 +277,7 @@ def excluir_pedido(publisher):
         "motivo": "excluido pelo usuario",
         "origem": "usuario",
     })
-    print("Pedido %s excluido." % pedido_id)
+    print(f"Pedido {pedido_id} excluido.")
 
 
 MENU = """
@@ -320,7 +320,7 @@ def main():
             print("Opcao invalida.")
 
     publisher.close()
-    print("\n[%s] encerrado." % NOME)
+    print(f"\n[{NOME}] encerrado.")
 
 
 if __name__ == "__main__":

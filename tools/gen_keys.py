@@ -34,34 +34,34 @@ def main() -> None:
 
     existentes = [
         s for s in MICROSSERVICOS
-        if (ROOT / s / "keys" / ("%s.key.pem" % s)).exists()
+        if (ROOT / s / "keys" / f"{s}.key.pem").exists()
     ]
     if existentes and not force:
-        print("Chaves privadas ja existem para: %s" % ", ".join(existentes))
+        print(f"Chaves privadas ja existem para: {', '.join(existentes)}")
         print("Use --force para gerar novamente (invalida as chaves atuais).")
         return
 
-    print("Gerando %d pares RSA-2048...\n" % len(MICROSSERVICOS))
+    print(f"Gerando {len(MICROSSERVICOS)} pares RSA-2048...\n")
     pares = {nome: generate_keypair() for nome in MICROSSERVICOS}
 
     for dono in MICROSSERVICOS:
         pasta = ROOT / dono / "keys"
         pasta.mkdir(parents=True, exist_ok=True)
 
-        priv = pasta / ("%s.key.pem" % dono)
+        priv = pasta / f"{dono}.key.pem"
         priv.write_bytes(private_to_pem(pares[dono]))
         priv.chmod(0o600)
 
         for servico, chave in pares.items():
-            (pasta / ("%s.pub.pem" % servico)).write_bytes(public_to_pem(chave))
+            (pasta / f"{servico}.pub.pem").write_bytes(public_to_pem(chave))
 
-        print("  %-14s -> 1 privada + %d publicas" % (dono, len(pares)))
+        print(f"  {dono:<14} -> 1 privada + {len(pares)} publicas")
 
     for consumidor in CONSUMIDORES:
         pasta = ROOT / consumidor / "keys"
         pasta.mkdir(parents=True, exist_ok=True)
         (pasta / "ms_promocoes.pub.pem").write_bytes(public_to_pem(pares["ms_promocoes"]))
-        print("  %-14s -> ms_promocoes.pub.pem" % consumidor)
+        print(f"  {consumidor:<14} -> ms_promocoes.pub.pem")
 
     print("\nPronto. Chaves privadas com permissao 0600 e fora do git.")
 

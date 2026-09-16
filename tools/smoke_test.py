@@ -24,7 +24,7 @@ def main():
     produto = (sys.argv[1] if len(sys.argv) > 1 else "P1").upper()
     qtd = int(sys.argv[2]) if len(sys.argv) > 2 else 1
     if produto not in PRODUTOS:
-        sys.exit("produto inexistente: %s" % produto)
+        sys.exit(f"produto inexistente: {produto}")
 
     servico = MsPrincipal()
     threading.Thread(target=servico.start, daemon=True).start()
@@ -36,8 +36,8 @@ def main():
     pedido_id = STORE.novo_id()
     STORE.registrar(pedido_id, "smoke-test", itens, total)
 
-    print("\n>>> publicando pedido.criado: %s (%dx %s, R$ %.2f)\n"
-          % (pedido_id, qtd, produto, total))
+    print(f"\n>>> publicando pedido.criado: {pedido_id} "
+          f"({qtd}x {produto}, R$ {total:.2f})\n")
     publisher.publish(EX_ECOMMERCE, "pedido.criado", {
         "pedidoId": pedido_id, "cliente": "smoke-test",
         "itens": itens, "total": total,
@@ -47,13 +47,13 @@ def main():
     while time.time() < limite:
         status = STORE.status_de(pedido_id)
         if status in TERMINAIS:
-            print("\n>>> status final de %s: %s (%s)"
-                  % (pedido_id, status, STATUS.get(status, "?")))
+            print(f"\n>>> status final de {pedido_id}: {status} "
+                  f"({STATUS.get(status, '?')})")
             publisher.close()
             return 0
         time.sleep(0.3)
 
-    print("\n>>> TIMEOUT: status parou em %s" % STORE.status_de(pedido_id))
+    print(f"\n>>> TIMEOUT: status parou em {STORE.status_de(pedido_id)}")
     print("    verifique se ms_estoque/ms_pagamento/ms_entrega estao rodando.")
     publisher.close()
     return 1

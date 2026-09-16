@@ -30,7 +30,7 @@ from common.service import EX_ECOMMERCE, connect, declare_topology, keys_dir  # 
 
 
 def signer(nome):
-    return Signer(load_private(keys_dir(nome) / ("%s.key.pem" % nome)))
+    return Signer(load_private(keys_dir(nome) / f"{nome}.key.pem"))
 
 
 def assinado(nome, event, payload):
@@ -49,9 +49,9 @@ def main():
 
     def enviar(rotulo, envelope, routing_key=None):
         routing_key = routing_key or envelope.event
-        print("\n[%s]" % rotulo)
-        print("   routing key: %s | pedido: %s"
-              % (routing_key, envelope.payload.get("pedidoId")))
+        print(f"\n[{rotulo}]")
+        print(f"   routing key: {routing_key} | "
+              f"pedido: {envelope.payload.get('pedidoId')}")
         canal.basic_publish(EX_ECOMMERCE, routing_key, envelope.to_bytes(),
                             properties=pika.BasicProperties(delivery_mode=2))
         time.sleep(2)

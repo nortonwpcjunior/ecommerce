@@ -69,9 +69,8 @@ def connect(heartbeat: int = 60):
         conexao = pika.BlockingConnection(params)
     except pika.exceptions.AMQPConnectionError:
         sys.exit(
-            "\n[ERRO] Nao foi possivel conectar ao RabbitMQ em %s:%s.\n"
+            f"\n[ERRO] Nao foi possivel conectar ao RabbitMQ em {params.host}:{params.port}.\n"
             "       Suba o broker com:  docker compose up -d\n"
-            % (params.host, params.port)
         )
     return conexao, conexao.channel()
 
@@ -97,7 +96,7 @@ class Publisher:
 
     def __init__(self, nome: str, canal=None):
         self.nome = nome
-        self.signer = Signer(load_private(keys_dir(nome) / ("%s.key.pem" % nome)))
+        self.signer = Signer(load_private(keys_dir(nome) / f"{nome}.key.pem"))
         self._canal_emprestado = canal is not None
         self._conexao = None
         self._canal = canal
@@ -134,8 +133,8 @@ class Publisher:
             self._abrir()
             self._canal.basic_publish(exchange, routing_key, corpo, propriedades)
 
-        log.info("--> publicado %s em %s (hash %s)",
-                 routing_key, exchange, sha256_hex(assinados)[:16])
+        log.info(f"--> publicado {routing_key} em {exchange} "
+                 f"(hash {sha256_hex(assinados)[:16]})")
 
     def close(self) -> None:
         if not self._canal_emprestado and self._conexao is not None:
@@ -175,16 +174,16 @@ class Microservice:
         self.channel.queue_declare(self.queue, durable=True)
         for exchange, routing_key in self.bindings:
             self.channel.queue_bind(self.queue, exchange, routing_key)
-            log.info("binding: %s <- '%s' (%s)", self.queue, routing_key, exchange)
+            log.info(f"binding: {self.queue} <- '{routing_key}' ({exchange})")
         # Um evento por vez: ordem de processamento previsivel.
         self.channel.basic_qos(prefetch_count=1)
 
     def start(self) -> None:
         self.setup()
-        log.info("chaves publicas carregadas: %s",
-                 ", ".join(self.verifier.produtores_conhecidos()))
+        produtores = ", ".join(self.verifier.produtores_conhecidos())
+        log.info(f"chaves publicas carregadas: {produtores}")
         self.channel.basic_consume(self.queue, self._ao_receber, auto_ack=False)
-        log.info("aguardando eventos em %s (Ctrl+C para sair)", self.queue)
+        log.info(f"aguardando eventos em {self.queue} (Ctrl+C para sair)")
         try:
             self.channel.start_consuming()
         except KeyboardInterrupt:
@@ -204,16 +203,16 @@ class Microservice:
         try:
             envelope = Envelope.from_bytes(corpo)
         except (ValueError, UnicodeDecodeError) as exc:
-            log.error("corpo invalido em %s (%s): evento DESCARTADO",
-                      method.routing_key, exc)
+            log.error(f"corpo invalido em {method.routing_key} ({exc}): "
+                      "evento DESCARTADO")
             canal.basic_nack(tag, requeue=False)
             return
 
         # A routing key da entrega tem de casar com o evento assinado, senao
         # um envelope valido poderia ser reencaminhado para outra fila.
         if envelope.event != method.routing_key:
-            log.error("routing key '%s' diferente do evento assinado '%s': DESCARTADO",
-                      method.routing_key, envelope.event)
+            log.error(f"routing key '{method.routing_key}' diferente do evento "
+                      f"assinado '{envelope.event}': DESCARTADO")
             canal.basic_nack(tag, requeue=False)
             return
 
@@ -221,18 +220,18 @@ class Microservice:
         try:
             self.verifier.verificar(envelope)
         except AssinaturaInvalida as exc:
-            log.error("ASSINATURA INVALIDA em %s (%s): evento DESCARTADO",
-                      method.routing_key, exc)
+            log.error(f"ASSINATURA INVALIDA em {method.routing_key} ({exc}): "
+                      "evento DESCARTADO")
             canal.basic_nack(tag, requeue=False)
             return
 
-        log.info("<-- %s de %s (assinatura OK)", envelope.event, envelope.producer)
+        log.info(f"<-- {envelope.event} de {envelope.producer} (assinatura OK)")
 
         try:
             self.handle(envelope.event, envelope.payload)
         except Exception:
             # Sem requeue: o evento voltaria em loop e travaria a fila.
-            log.exception("erro ao processar %s: evento DESCARTADO", envelope.event)
+            log.exception(f"erro ao processar {envelope.event}: evento DESCARTADO")
             canal.basic_nack(tag, requeue=False)
             return
 
@@ -245,5 +244,5 @@ class Microservice:
 
     def publish(self, exchange: str, routing_key: str, payload: dict) -> None:
         if self.publisher is None:
-            raise RuntimeError("%s foi criado com publica=False" % self.name)
+            raise RuntimeError(f"{self.name} foi criado com publica=False")
         self.publisher.publish(exchange, routing_key, payload)

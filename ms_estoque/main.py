@@ -57,7 +57,7 @@ class MsEstoque(Microservice):
         # Idempotencia: a entrega do RabbitMQ e at-least-once, um evento
         # reentregue nao pode reservar duas vezes.
         if pedido_id in self.reservas:
-            log.info("pedido %s ja reservado -- ignorando duplicata", pedido_id)
+            log.info(f"pedido {pedido_id} ja reservado -- ignorando duplicata")
             return
 
         # Verifica TODOS os itens antes de dar qualquer baixa.
@@ -68,14 +68,14 @@ class MsEstoque(Microservice):
 
         if indisponiveis:
             faltas = ", ".join(
-                "%s (pedido %d, disponivel %d)"
-                % (i["produtoId"], i["quantidade"], self.estoque.get(i["produtoId"], 0))
+                f"{i['produtoId']} (pedido {i['quantidade']}, "
+                f"disponivel {self.estoque.get(i['produtoId'], 0)})"
                 for i in indisponiveis
             )
-            log.info("SEM ESTOQUE para %s: %s", pedido_id, faltas)
+            log.info(f"SEM ESTOQUE para {pedido_id}: {faltas}")
             self.publish(EX_ECOMMERCE, "estoque.indisponivel", {
                 "pedidoId": pedido_id,
-                "motivo": "produtos indisponiveis: %s" % faltas,
+                "motivo": f"produtos indisponiveis: {faltas}",
             })
             return
 
@@ -83,7 +83,7 @@ class MsEstoque(Microservice):
             self.estoque[item["produtoId"]] -= item["quantidade"]
         self.reservas[pedido_id] = itens
 
-        log.info("reservado para %s: %s", pedido_id, self._resumo(itens))
+        log.info(f"reservado para {pedido_id}: {self._resumo(itens)}")
         self._mostrar_estoque("apos reserva")
         self.publish(EX_ECOMMERCE, "pedido.estoque_ok", {
             "pedidoId": pedido_id,
@@ -98,26 +98,25 @@ class MsEstoque(Microservice):
         itens = self.reservas.pop(pedido_id, None)
 
         if itens is None:
-            log.info("pedido %s nao possuia reserva -- nada a devolver", pedido_id)
+            log.info(f"pedido {pedido_id} nao possuia reserva -- nada a devolver")
             return
 
         for item in itens:
             self.estoque[item["produtoId"]] = (
                 self.estoque.get(item["produtoId"], 0) + item["quantidade"]
             )
-        log.info("devolvido ao estoque de %s: %s", pedido_id, self._resumo(itens))
+        log.info(f"devolvido ao estoque de {pedido_id}: {self._resumo(itens)}")
         self._mostrar_estoque("apos devolucao")
 
     # ---- apoio ---------------------------------------------------------
 
     @staticmethod
     def _resumo(itens):
-        return ", ".join("%dx %s" % (i["quantidade"], i["produtoId"]) for i in itens)
+        return ", ".join(f"{i['quantidade']}x {i['produtoId']}" for i in itens)
 
     def _mostrar_estoque(self, titulo):
-        log.info("%s: %s | reservas ativas: %d", titulo,
-                 " ".join("%s=%d" % (p, q) for p, q in sorted(self.estoque.items())),
-                 len(self.reservas))
+        saldos = " ".join(f"{p}={q}" for p, q in sorted(self.estoque.items()))
+        log.info(f"{titulo}: {saldos} | reservas ativas: {len(self.reservas)}")
 
 
 if __name__ == "__main__":
