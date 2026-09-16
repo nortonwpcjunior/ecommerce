@@ -113,7 +113,7 @@ def load_public_keys(keys_dir: Path) -> dict:
             f"{keys_dir} nao existe. Rode primeiro: python -m tools.gen_keys"
         )
     chaves = {
-        path.name[: -len(".pub.pem")]: load_public(path)
+        path.name.removesuffix(".pub.pem"): load_public(path)
         for path in sorted(keys_dir.glob("*.pub.pem"))
     }
     if not chaves:

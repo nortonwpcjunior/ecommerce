@@ -393,4 +393,8 @@ broker.
   As **publicas** (`*.pub.pem`) sao versionadas, como pede a especificacao.
 - Ao rodar o menu, os eventos chegam em outra thread e imprimem no console.
   Se a tela embolar durante uma digitacao, ENTER redesenha o menu.
-- Testado com Python 3.13, pika 1.3.2, cryptography 43.0.3, RabbitMQ 3.13.
+- Requer **Python 3.9 ou superior** (`str.removesuffix` em `common/crypto.py`).
+  Testado com Python 3.13 e com o 3.9.6 do sistema (`/usr/bin/python3` no
+  macOS), pika 1.3.2, cryptography 43.0.3, RabbitMQ 3.13. As assinaturas
+  interoperam entre as duas versoes: a serializacao canonica produz os mesmos
+  bytes, entao um evento publicado no 3.13 e validado no 3.9.6 e vice-versa.
