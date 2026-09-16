@@ -8,18 +8,19 @@ validando a assinatura do ms_promocoes.
 
 import logging
 
-from common.service import EX_PROMOCOES, Microservice
+from common.service import Microservice
 
 log = logging.getLogger(__name__)
 
 
 class ConsumidorPromocoes(Microservice):
-    publica = False          # sem chave privada: so consome
-    padroes = []             # padroes de binding na exchange topic
+    """So o que C1 e C2 tem em comum: nao publicam e imprimem a promocao.
 
-    def __init__(self):
-        type(self).bindings = [(EX_PROMOCOES, p) for p in self.padroes]
-        super().__init__()
+    Cada consumidor declara os proprios `bindings`, como qualquer outro
+    processo do projeto.
+    """
+
+    publica = False          # sem chave privada: so consome
 
     def handle(self, event, payload):
         log.info(

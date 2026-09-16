@@ -303,9 +303,9 @@ def main():
     cliente = ler("\nSeu nome (ENTER para 'cliente1'): ") or "cliente1"
 
     acoes = {
-        "1": lambda: mostrar_produtos(),
+        "1": mostrar_produtos,
         "2": lambda: realizar_pedido(publisher, cliente),
-        "3": lambda: consultar_pedidos(),
+        "3": consultar_pedidos,
         "4": lambda: excluir_pedido(publisher),
     }
 

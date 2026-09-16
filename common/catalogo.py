@@ -14,9 +14,3 @@ PRODUTOS = {
     "P5": {"nome": "Cadeira ergonomica", "categoria": "C", "preco": 1250.00},
     "P6": {"nome": "Headset USB",       "categoria": "C", "preco": 279.00},
 }
-
-CATEGORIAS = ("A", "B", "C")
-
-
-def por_categoria(categoria: str):
-    return {pid: p for pid, p in PRODUTOS.items() if p["categoria"] == categoria}

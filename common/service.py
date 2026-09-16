@@ -37,7 +37,7 @@ log = logging.getLogger(__name__)
 def configurar_log(nome_processo: str) -> None:
     logging.basicConfig(
         level=logging.INFO,
-        format="%%(asctime)s [%s] %%(message)s" % nome_processo,
+        format=f"%(asctime)s [{nome_processo}] %(message)s",
         datefmt="%H:%M:%S",
     )
     logging.getLogger("pika").setLevel(logging.WARNING)  # pika e muito verboso
