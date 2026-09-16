@@ -1,7 +1,6 @@
 """Criptografia de chave assimetrica: hash, assinatura e verificacao.
 
-RSA-2048 + SHA-256, padding PKCS#1 v1.5 -- equivalente ao "SHA256withRSA" do
-Java/Kotlin, caso seja preciso interoperar.
+RSA-2048 + SHA-256, padding PKCS#1 v1.5.
 
 O hash e calculado explicitamente e a assinatura usa utils.Prehashed, para que
 os tres passos exigidos pelo enunciado aparecam separados no codigo:

@@ -307,12 +307,11 @@ O `P3` comeca zerado de proposito -- e o caminho mais rapido para demonstrar
 apenas o payload. Assinando so o payload, um atacante pega um envelope valido,
 troca a routing key e o campo `event`, e reaproveita a assinatura: um payload
 assinado para `pedido.estoque_ok` passa como `pagamento.aprovado` e o
-`ms_entrega` emite nota fiscal de um pedido nunca pago. Isso foi testado e
-confirmado antes da correcao -- ver `tools/test_assinatura_invalida.py`, caso 4.
+`ms_entrega` emite nota fiscal de um pedido nunca pago. Ver
+`tools/test_assinatura_invalida.py`, caso 4.
 
 **2. Serializacao canonica (`canon`)**: `sort_keys=True` e sem espacos. Os
-mesmos dados produzem sempre os mesmos bytes, no produtor e no consumidor. E a
-causa numero 1 de "assinatura invalida" inexplicavel.
+mesmos dados produzem sempre os mesmos bytes, no produtor e no consumidor.
 
 **3. O hash e calculado explicitamente** (`sha256_digest`) e a assinatura usa
 `utils.Prehashed`. Os tres passos do enunciado ficam separados no codigo:
@@ -395,6 +394,3 @@ broker.
 - Ao rodar o menu, os eventos chegam em outra thread e imprimem no console.
   Se a tela embolar durante uma digitacao, ENTER redesenha o menu.
 - Testado com Python 3.13, pika 1.3.2, cryptography 43.0.3, RabbitMQ 3.13.
-- A camada `common/` incorpora o tratamento de envelope, heartbeat e reconexao
-  de uma versao anterior deste trabalho (`~/ecommerce`), que resolvia esses
-  tres pontos melhor.

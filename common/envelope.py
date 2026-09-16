@@ -23,7 +23,7 @@ def canon(obj) -> bytes:
     """Serializacao canonica: chaves ordenadas, sem espacos.
 
     Os mesmos dados produzem sempre os mesmos bytes, no produtor e no
-    consumidor. E a causa numero 1 de "assinatura invalida" inexplicavel.
+    consumidor.
     """
     return json.dumps(
         obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
