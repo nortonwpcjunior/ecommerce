@@ -25,8 +25,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from common.catalogo import PRODUTOS
-from common.service import EX_ECOMMERCE, Microservice, Publisher
+from common.catalogo import PRODUTOS  # noqa: E402
+from common.service import EX_ECOMMERCE, Microservice, Publisher  # noqa: E402
 
 NOME = "ms_principal"
 log = logging.getLogger(NOME)
