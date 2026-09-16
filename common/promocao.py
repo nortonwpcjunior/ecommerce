@@ -7,6 +7,7 @@ validando a assinatura do ms_promocoes.
 """
 
 import logging
+from typing import override
 
 from common.service import Microservice
 
@@ -22,6 +23,7 @@ class ConsumidorPromocoes(Microservice):
 
     publica = False          # sem chave privada: so consome
 
+    @override
     def handle(self, event, payload):
         log.info(
             f"{event} | {payload['nome']} (cat {payload['categoria']}): "

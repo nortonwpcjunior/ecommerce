@@ -47,6 +47,7 @@ A assinatura cobre os **quatro** primeiros campos, nao apenas o `payload`
 ```
 ecommerce-mom/
 ├── common/
+│   ├── eventos.py        # Evento (StrEnum): fonte unica das routing keys
 │   ├── envelope.py       # Envelope + serializacao canonica (canon)
 │   ├── crypto.py         # hash, assinatura, verificacao, chaves
 │   ├── service.py        # conexao, topologia, Publisher, Microservice
@@ -374,6 +375,26 @@ consultar sem chamada direta, que o enunciado proibe.
 privada. Nao podem publicar nada nem falar com microsservico algum, so com o
 broker.
 
+**17. As routing keys vivem em um `StrEnum`** (`common/eventos.py`). Antes
+cada nome aparecia como string literal solta em varios arquivos
+(`pedido.criado` 13 vezes, `pedido.estoque_ok` e `pagamento.aprovado` 8 cada).
+Um erro de digitacao ali e um bug silencioso: o evento sai numa chave que
+nenhuma fila escuta, ou um binding nunca casa, e nada estoura -- o pedido so
+para de andar. Como `StrEnum` herda de `str`, o membro serve direto como
+routing key do pika e como valor do campo `event`: a serializacao canonica
+produz os mesmos bytes e a assinatura nao muda (o hash do `tools.test_crypto`
+e o mesmo de antes da mudanca).
+
+**18. O `Status` carrega o rotulo exibido** em vez de existir um dicionario
+`STATUS` paralelo, que podia sair de sincronia com os status usados no codigo.
+O valor do membro continua sendo o nome interno, entao o
+`startswith("CANCELADO")` do menu segue funcionando.
+
+**19. O despacho de eventos usa `match`** no `ms_principal` (5 casos) e no
+`ms_estoque`. Atencao ao escrever: `case Evento.PEDIDO_CRIADO` e padrao de
+VALOR porque o nome e pontilhado; um `case PEDIDO_CRIADO` solto seria padrao
+de CAPTURA e casaria com qualquer evento.
+
 ## Limitacoes conhecidas
 
 - **A exclusao pelo usuario nao e coordenada com o pagamento.** O menu recusa
@@ -393,8 +414,18 @@ broker.
   As **publicas** (`*.pub.pem`) sao versionadas, como pede a especificacao.
 - Ao rodar o menu, os eventos chegam em outra thread e imprimem no console.
   Se a tela embolar durante uma digitacao, ENTER redesenha o menu.
-- Requer **Python 3.9 ou superior** (`str.removesuffix` em `common/crypto.py`).
-  Testado com Python 3.13 e com o 3.9.6 do sistema (`/usr/bin/python3` no
-  macOS), pika 1.3.2, cryptography 43.0.3, RabbitMQ 3.13. As assinaturas
-  interoperam entre as duas versoes: a serializacao canonica produz os mesmos
-  bytes, entao um evento publicado no 3.13 e validado no 3.9.6 e vice-versa.
+- Requer **Python 3.12 ou superior**: `StrEnum` (3.11), `match` (3.10),
+  `typing.override` e `typing.Self` (3.12/3.11). Testado com Python 3.14.7 e
+  3.13.15, pika 1.3.2, cryptography 43.0.3, RabbitMQ 3.13. O
+  `cryptography 43.0.3` instala no 3.14 pelo wheel `cp39-abi3`, sem compilar.
+- O `@override` nos `handle()` so e verificado por type checker estatico, nao
+  em tempo de execucao. Para que ele pegue um `handle` escrito errado:
+
+  ```bash
+  MYPYPATH=. mypy --explicit-package-bases --ignore-missing-imports \
+      common tools ms_principal ms_estoque ms_pagamento ms_entrega \
+      ms_promocoes consumidor_c1 consumidor_c2
+  ```
+
+  O `--explicit-package-bases` e necessario porque os servicos tem arquivos
+  `main.py` homonimos e o projeto nao usa `__init__.py`.

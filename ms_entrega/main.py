@@ -12,9 +12,11 @@ import random
 import sys
 import time
 from pathlib import Path
+from typing import override
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from common.eventos import Evento  # noqa: E402
 from common.service import EX_ECOMMERCE, Microservice  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -26,7 +28,7 @@ class MsEntrega(Microservice):
     name = "ms_entrega"
     queue = "fila.entrega"
     bindings = [
-        (EX_ECOMMERCE, "pagamento.aprovado"),
+        (EX_ECOMMERCE, Evento.PAGAMENTO_APROVADO),
     ]
 
     def __init__(self):
@@ -34,8 +36,9 @@ class MsEntrega(Microservice):
         self._proxima_nota = 1000
         self._emitidas = set()
 
+    @override
     def handle(self, event, payload):
-        if event != "pagamento.aprovado":
+        if event != Evento.PAGAMENTO_APROVADO:
             return
 
         pedido_id = payload["pedidoId"]
@@ -55,7 +58,7 @@ class MsEntrega(Microservice):
         self._emitidas.add(pedido_id)
         log.info(f"despachado via {transportadora} (rastreio {rastreio})")
 
-        self.publish(EX_ECOMMERCE, "pedido.enviado", {
+        self.publish(EX_ECOMMERCE, Evento.PEDIDO_ENVIADO, {
             "pedidoId": pedido_id,
             "notaFiscal": nota,
             "rastreio": rastreio,

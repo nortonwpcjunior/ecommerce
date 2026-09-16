@@ -13,9 +13,11 @@ import random
 import sys
 import time
 from pathlib import Path
+from typing import override
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from common.eventos import Evento  # noqa: E402
 from common.service import EX_ECOMMERCE, Microservice  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -33,11 +35,12 @@ class MsPagamento(Microservice):
     name = "ms_pagamento"
     queue = "fila.pagamento"
     bindings = [
-        (EX_ECOMMERCE, "pedido.estoque_ok"),
+        (EX_ECOMMERCE, Evento.PEDIDO_ESTOQUE_OK),
     ]
 
+    @override
     def handle(self, event, payload):
-        if event != "pedido.estoque_ok":
+        if event != Evento.PEDIDO_ESTOQUE_OK:
             return
 
         pedido_id = payload["pedidoId"]
@@ -49,7 +52,7 @@ class MsPagamento(Microservice):
         if random.random() < TAXA_APROVACAO:
             autorizacao = f"AUT-{random.randint(0, 999999):06d}"
             log.info(f"APROVADO ({autorizacao})")
-            self.publish(EX_ECOMMERCE, "pagamento.aprovado", {
+            self.publish(EX_ECOMMERCE, Evento.PAGAMENTO_APROVADO, {
                 "pedidoId": pedido_id,
                 "valor": valor,
                 "autorizacao": autorizacao,
@@ -58,7 +61,7 @@ class MsPagamento(Microservice):
         else:
             motivo = random.choice(MOTIVOS_RECUSA)
             log.info(f"RECUSADO ({motivo})")
-            self.publish(EX_ECOMMERCE, "pagamento.recusado", {
+            self.publish(EX_ECOMMERCE, Evento.PAGAMENTO_RECUSADO, {
                 "pedidoId": pedido_id,
                 "valor": valor,
                 "motivo": motivo,

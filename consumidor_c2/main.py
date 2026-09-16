@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from common.eventos import PROMOCAO_TODAS  # noqa: E402
 from common.promocao import ConsumidorPromocoes  # noqa: E402
 from common.service import EX_PROMOCOES  # noqa: E402
 
@@ -18,7 +19,7 @@ class ConsumidorC2(ConsumidorPromocoes):
     name = "consumidor_c2"
     queue = "fila.C2"
     bindings = [
-        (EX_PROMOCOES, "promocao.categoria.*"),
+        (EX_PROMOCOES, PROMOCAO_TODAS),
     ]
 
 

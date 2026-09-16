@@ -157,7 +157,7 @@ class Microservice:
 
     name = ""
     queue = ""
-    bindings = []   # lista de (exchange, routing_key)
+    bindings: list[tuple[str, str]] = []   # (exchange, routing_key)
     publica = True  # False para consumidores que nunca publicam (sem chave privada)
 
     def __init__(self):

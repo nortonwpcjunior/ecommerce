@@ -11,10 +11,12 @@ mesma thread, entao os handlers nunca rodam em paralelo aqui.
 import logging
 import sys
 from pathlib import Path
+from typing import override
 
 # Permite rodar como `python ms_estoque/main.py` ou `python -m ms_estoque.main`.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from common.eventos import Evento  # noqa: E402
 from common.service import EX_ECOMMERCE, Microservice  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -29,8 +31,8 @@ class MsEstoque(Microservice):
     name = "ms_estoque"
     queue = "fila.estoque"
     bindings = [
-        (EX_ECOMMERCE, "pedido.criado"),
-        (EX_ECOMMERCE, "pedido.excluido"),
+        (EX_ECOMMERCE, Evento.PEDIDO_CRIADO),
+        (EX_ECOMMERCE, Evento.PEDIDO_EXCLUIDO),
     ]
 
     def __init__(self):
@@ -42,11 +44,15 @@ class MsEstoque(Microservice):
         super().setup()
         self._mostrar_estoque("estoque inicial")
 
+    @override
     def handle(self, event, payload):
-        if event == "pedido.criado":
-            self._pedido_criado(payload)
-        elif event == "pedido.excluido":
-            self._pedido_excluido(payload)
+        # `case Evento.X` e padrao de VALOR porque o nome e pontilhado. Um
+        # `case X` simples seria padrao de CAPTURA e casaria com tudo.
+        match event:
+            case Evento.PEDIDO_CRIADO:
+                self._pedido_criado(payload)
+            case Evento.PEDIDO_EXCLUIDO:
+                self._pedido_excluido(payload)
 
     # ---- pedido.criado -------------------------------------------------
 
@@ -73,7 +79,7 @@ class MsEstoque(Microservice):
                 for i in indisponiveis
             )
             log.info(f"SEM ESTOQUE para {pedido_id}: {faltas}")
-            self.publish(EX_ECOMMERCE, "estoque.indisponivel", {
+            self.publish(EX_ECOMMERCE, Evento.ESTOQUE_INDISPONIVEL, {
                 "pedidoId": pedido_id,
                 "motivo": f"produtos indisponiveis: {faltas}",
             })
@@ -85,7 +91,7 @@ class MsEstoque(Microservice):
 
         log.info(f"reservado para {pedido_id}: {self._resumo(itens)}")
         self._mostrar_estoque("apos reserva")
-        self.publish(EX_ECOMMERCE, "pedido.estoque_ok", {
+        self.publish(EX_ECOMMERCE, Evento.PEDIDO_ESTOQUE_OK, {
             "pedidoId": pedido_id,
             "itens": itens,
             "total": pedido.get("total", 0.0),

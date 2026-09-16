@@ -17,6 +17,7 @@ emitiria nota fiscal de um pedido nunca pago.
 
 import json
 from dataclasses import asdict, dataclass, field, fields
+from typing import Self
 
 
 def canon(obj) -> bytes:
@@ -51,7 +52,7 @@ class Envelope:
         return canon(asdict(self))
 
     @classmethod
-    def from_bytes(cls, raw: bytes) -> "Envelope":
+    def from_bytes(cls, raw: bytes) -> Self:
         dados = json.loads(raw)
         if not isinstance(dados, dict):
             raise ValueError("envelope nao e um objeto JSON")

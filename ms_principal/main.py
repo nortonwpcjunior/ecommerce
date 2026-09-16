@@ -21,26 +21,42 @@ import random
 import string
 import sys
 import threading
+from enum import StrEnum
 from pathlib import Path
+from typing import override
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.catalogo import PRODUTOS  # noqa: E402
+from common.eventos import Evento  # noqa: E402
 from common.service import EX_ECOMMERCE, Microservice, Publisher  # noqa: E402
 
 NOME = "ms_principal"
 log = logging.getLogger(NOME)
 
-# status interno -> rotulo exibido ao usuario
-STATUS = {
-    "AGUARDANDO_ESTOQUE": "aguardando verificacao de estoque",
-    "ESTOQUE_RESERVADO": "estoque reservado, aguardando pagamento",
-    "PAGAMENTO_APROVADO": "pagamento aprovado, preparando envio",
-    "ENVIADO": "enviado",
-    "CANCELADO_SEM_ESTOQUE": "CANCELADO - sem estoque",
-    "CANCELADO_PAGAMENTO": "CANCELADO - pagamento recusado",
-    "CANCELADO_USUARIO": "CANCELADO - excluido pelo usuario",
-}
+
+class Status(StrEnum):
+    """Status interno do pedido, com o rotulo exibido ao usuario.
+
+    O valor do membro e o nome interno -- e o que vai para o STORE e o que o
+    `startswith("CANCELADO")` do menu testa. O rotulo fica no mesmo lugar, em
+    vez de num dicionario paralelo que pode sair de sincronia.
+    """
+
+    def __new__(cls, valor, rotulo):
+        membro = str.__new__(cls, valor)
+        membro._value_ = valor
+        membro.rotulo = rotulo
+        return membro
+
+    AGUARDANDO_ESTOQUE = "AGUARDANDO_ESTOQUE", "aguardando verificacao de estoque"
+    ESTOQUE_RESERVADO = "ESTOQUE_RESERVADO", "estoque reservado, aguardando pagamento"
+    PAGAMENTO_APROVADO = "PAGAMENTO_APROVADO", "pagamento aprovado, preparando envio"
+    ENVIADO = "ENVIADO", "enviado"
+    CANCELADO_SEM_ESTOQUE = "CANCELADO_SEM_ESTOQUE", "CANCELADO - sem estoque"
+    CANCELADO_PAGAMENTO = "CANCELADO_PAGAMENTO", "CANCELADO - pagamento recusado"
+    CANCELADO_USUARIO = "CANCELADO_USUARIO", "CANCELADO - excluido pelo usuario"
+
 
 # Sufixo aleatorio por execucao do processo. Sem ele, reiniciar o ms_principal
 # reinicia o contador em 1 e os novos pedidos colidem com os IDs que o
@@ -67,7 +83,7 @@ class PedidoStore:
                 "cliente": cliente,
                 "itens": itens,
                 "total": total,
-                "status": "AGUARDANDO_ESTOQUE",
+                "status": Status.AGUARDANDO_ESTOQUE,
                 "detalhe": "",
             }
 
@@ -108,13 +124,14 @@ class MsPrincipal(Microservice):
     name = NOME
     queue = "fila.principal"
     bindings = [
-        (EX_ECOMMERCE, "pedido.estoque_ok"),
-        (EX_ECOMMERCE, "estoque.indisponivel"),
-        (EX_ECOMMERCE, "pagamento.aprovado"),
-        (EX_ECOMMERCE, "pagamento.recusado"),
-        (EX_ECOMMERCE, "pedido.enviado"),
+        (EX_ECOMMERCE, Evento.PEDIDO_ESTOQUE_OK),
+        (EX_ECOMMERCE, Evento.ESTOQUE_INDISPONIVEL),
+        (EX_ECOMMERCE, Evento.PAGAMENTO_APROVADO),
+        (EX_ECOMMERCE, Evento.PAGAMENTO_RECUSADO),
+        (EX_ECOMMERCE, Evento.PEDIDO_ENVIADO),
     ]
 
+    @override
     def handle(self, event, payload):
         pedido_id = payload["pedidoId"]
 
@@ -125,36 +142,38 @@ class MsPrincipal(Microservice):
 
         cancelar_com = None
 
-        if event == "pedido.estoque_ok":
-            STORE.atualizar(pedido_id, "ESTOQUE_RESERVADO")
+        # `case Evento.X` e padrao de VALOR porque o nome e pontilhado. Um
+        # `case X` simples seria padrao de CAPTURA e casaria com tudo.
+        match event:
+            case Evento.PEDIDO_ESTOQUE_OK:
+                STORE.atualizar(pedido_id, Status.ESTOQUE_RESERVADO)
 
-        elif event == "estoque.indisponivel":
-            motivo = payload.get("motivo", "sem estoque")
-            STORE.atualizar(pedido_id, "CANCELADO_SEM_ESTOQUE", motivo)
-            cancelar_com = motivo
+            case Evento.ESTOQUE_INDISPONIVEL:
+                motivo = payload.get("motivo", "sem estoque")
+                STORE.atualizar(pedido_id, Status.CANCELADO_SEM_ESTOQUE, motivo)
+                cancelar_com = motivo
 
-        elif event == "pagamento.aprovado":
-            STORE.atualizar(pedido_id, "PAGAMENTO_APROVADO",
-                            f"autorizacao {payload.get('autorizacao', '?')}")
+            case Evento.PAGAMENTO_APROVADO:
+                STORE.atualizar(pedido_id, Status.PAGAMENTO_APROVADO,
+                                f"autorizacao {payload.get('autorizacao', '?')}")
 
-        elif event == "pagamento.recusado":
-            motivo = payload.get("motivo", "pagamento recusado")
-            STORE.atualizar(pedido_id, "CANCELADO_PAGAMENTO", motivo)
-            cancelar_com = motivo
+            case Evento.PAGAMENTO_RECUSADO:
+                motivo = payload.get("motivo", "pagamento recusado")
+                STORE.atualizar(pedido_id, Status.CANCELADO_PAGAMENTO, motivo)
+                cancelar_com = motivo
 
-        elif event == "pedido.enviado":
-            STORE.atualizar(pedido_id, "ENVIADO",
-                            f"nota {payload.get('notaFiscal', '?')}, "
-                            f"rastreio {payload.get('rastreio', '?')}")
+            case Evento.PEDIDO_ENVIADO:
+                STORE.atualizar(pedido_id, Status.ENVIADO,
+                                f"nota {payload.get('notaFiscal', '?')}, "
+                                f"rastreio {payload.get('rastreio', '?')}")
 
-        log.info(f"pedido {pedido_id} -> "
-                 f"{STATUS.get(STORE.status_de(pedido_id), '?')}")
+        log.info(f"pedido {pedido_id} -> {STORE.status_de(pedido_id).rotulo}")
 
         # Produto indisponivel ou pagamento recusado: o Principal publica
         # pedido.excluido para que o Estoque devolva a reserva.
         # Fora de qualquer lock.
         if cancelar_com is not None:
-            self.publish(EX_ECOMMERCE, "pedido.excluido", {
+            self.publish(EX_ECOMMERCE, Evento.PEDIDO_EXCLUIDO, {
                 "pedidoId": pedido_id,
                 "motivo": cancelar_com,
                 "origem": event,
@@ -228,7 +247,7 @@ def realizar_pedido(publisher, cliente):
     STORE.registrar(pedido_id, cliente, itens, total)
 
     print(f"\nPedido {pedido_id} criado -- total R$ {total:.2f}")
-    publisher.publish(EX_ECOMMERCE, "pedido.criado", {
+    publisher.publish(EX_ECOMMERCE, Evento.PEDIDO_CRIADO, {
         "pedidoId": pedido_id,
         "cliente": cliente,
         "itens": itens,
@@ -246,7 +265,7 @@ def consultar_pedidos():
         resumo = ", ".join(
             f"{i['quantidade']}x {i['produtoId']}" for i in dados["itens"]
         ) or "-"
-        rotulo = STATUS.get(dados["status"], dados["status"])
+        rotulo = dados["status"].rotulo
         print(f"{pedido_id}  R$ {dados['total']:8.2f}  {resumo:<14} {rotulo}")
         if dados["detalhe"]:
             print(f"                {dados['detalhe']}")
@@ -267,12 +286,12 @@ def excluir_pedido(publisher):
     if status.startswith("CANCELADO"):
         print(f"Pedido {pedido_id} ja esta cancelado.")
         return
-    if status == "ENVIADO":
+    if status == Status.ENVIADO:
         print(f"Pedido {pedido_id} ja foi enviado e nao pode ser excluido.")
         return
 
-    STORE.atualizar(pedido_id, "CANCELADO_USUARIO", "excluido pelo usuario")
-    publisher.publish(EX_ECOMMERCE, "pedido.excluido", {
+    STORE.atualizar(pedido_id, Status.CANCELADO_USUARIO, "excluido pelo usuario")
+    publisher.publish(EX_ECOMMERCE, Evento.PEDIDO_EXCLUIDO, {
         "pedidoId": pedido_id,
         "motivo": "excluido pelo usuario",
         "origem": "usuario",

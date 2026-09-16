@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.catalogo import PRODUTOS  # noqa: E402
+from common.eventos import promocao_de  # noqa: E402
 from common.service import EX_PROMOCOES, Publisher, configurar_log  # noqa: E402
 
 NOME = "ms_promocoes"
@@ -39,7 +40,7 @@ def main():
             desconto = random.choice(DESCONTOS)
             preco_final = round(produto["preco"] * (1 - desconto / 100.0), 2)
 
-            routing_key = f"promocao.categoria.{produto['categoria']}"
+            routing_key = promocao_de(produto["categoria"])
             log.info(f"{routing_key}: {produto['nome']} com {desconto}% OFF "
                      f"(R$ {produto['preco']:.2f} -> R$ {preco_final:.2f})")
 

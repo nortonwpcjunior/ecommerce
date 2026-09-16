@@ -14,10 +14,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.catalogo import PRODUTOS  # noqa: E402
+from common.eventos import Evento  # noqa: E402
 from common.service import EX_ECOMMERCE, Publisher  # noqa: E402
-from ms_principal.main import STATUS, STORE, MsPrincipal  # noqa: E402
+from ms_principal.main import STORE, MsPrincipal, Status  # noqa: E402
 
-TERMINAIS = {"ENVIADO", "CANCELADO_SEM_ESTOQUE", "CANCELADO_PAGAMENTO"}
+TERMINAIS = frozenset({
+    Status.ENVIADO, Status.CANCELADO_SEM_ESTOQUE, Status.CANCELADO_PAGAMENTO,
+})
 
 
 def main():
@@ -38,7 +41,7 @@ def main():
 
     print(f"\n>>> publicando pedido.criado: {pedido_id} "
           f"({qtd}x {produto}, R$ {total:.2f})\n")
-    publisher.publish(EX_ECOMMERCE, "pedido.criado", {
+    publisher.publish(EX_ECOMMERCE, Evento.PEDIDO_CRIADO, {
         "pedidoId": pedido_id, "cliente": "smoke-test",
         "itens": itens, "total": total,
     })
@@ -48,7 +51,7 @@ def main():
         status = STORE.status_de(pedido_id)
         if status in TERMINAIS:
             print(f"\n>>> status final de {pedido_id}: {status} "
-                  f"({STATUS.get(status, '?')})")
+                  f"({status.rotulo})")
             publisher.close()
             return 0
         time.sleep(0.3)
