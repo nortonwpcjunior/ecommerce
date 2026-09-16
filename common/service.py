@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pika
 import pika.exceptions
+from pika.adapters.blocking_connection import BlockingChannel
 
 from common.crypto import (
     AssinaturaInvalida,
@@ -47,7 +48,7 @@ def keys_dir(nome_processo: str) -> Path:
     return ROOT / nome_processo / "keys"
 
 
-def connect(heartbeat: int = 60):
+def connect(heartbeat: int = 60) -> tuple[pika.BlockingConnection, BlockingChannel]:
     """Abre conexao e canal.
 
     heartbeat=0 desliga o heartbeat. Use em conexoes que ficam ociosas por
@@ -94,14 +95,18 @@ class Publisher:
     heartbeat desligado.
     """
 
-    def __init__(self, nome: str, canal=None):
+    def __init__(self, nome: str, canal: BlockingChannel | None = None):
         self.nome = nome
         self.signer = Signer(load_private(keys_dir(nome) / f"{nome}.key.pem"))
         self._canal_emprestado = canal is not None
-        self._conexao = None
-        self._canal = canal
+        self._conexao: pika.BlockingConnection | None = None
+        # Declarado sem valor: e sempre preenchido nos dois ramos abaixo, entao
+        # nao e Optional -- o type checker nao precisa de guarda em publish().
+        self._canal: BlockingChannel
         if canal is None:
             self._abrir()
+        else:
+            self._canal = canal
 
     def _abrir(self) -> None:
         self._conexao, self._canal = connect(heartbeat=0)

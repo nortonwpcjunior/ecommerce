@@ -49,7 +49,7 @@ def main():
     limite = time.time() + 30
     while time.time() < limite:
         status = STORE.status_de(pedido_id)
-        if status in TERMINAIS:
+        if status is not None and status in TERMINAIS:
             print(f"\n>>> status final de {pedido_id}: {status} "
                   f"({status.rotulo})")
             publisher.close()

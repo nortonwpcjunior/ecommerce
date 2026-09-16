@@ -43,7 +43,11 @@ class Status(StrEnum):
     vez de num dicionario paralelo que pode sair de sincronia.
     """
 
-    def __new__(cls, valor, rotulo):
+    # Anotacao sem valor: o enum nao a trata como membro, e o type checker
+    # passa a conhecer o atributo que o __new__ preenche.
+    rotulo: str
+
+    def __new__(cls, valor: str, rotulo: str) -> "Status":
         membro = str.__new__(cls, valor)
         membro._value_ = valor
         membro.rotulo = rotulo
@@ -103,10 +107,15 @@ class PedidoStore:
             pedido["detalhe"] = detalhe
             return True
 
-    def status_de(self, pedido_id):
+    def status_de(self, pedido_id) -> "Status | None":
         with self._lock:
             pedido = self._pedidos.get(pedido_id)
             return pedido["status"] if pedido else None
+
+    def rotulo_de(self, pedido_id) -> str:
+        """Rotulo do status, ou '?' se o pedido nao existir."""
+        status = self.status_de(pedido_id)
+        return status.rotulo if status is not None else "?"
 
     def listar(self):
         with self._lock:
@@ -167,7 +176,7 @@ class MsPrincipal(Microservice):
                                 f"nota {payload.get('notaFiscal', '?')}, "
                                 f"rastreio {payload.get('rastreio', '?')}")
 
-        log.info(f"pedido {pedido_id} -> {STORE.status_de(pedido_id).rotulo}")
+        log.info(f"pedido {pedido_id} -> {STORE.rotulo_de(pedido_id)}")
 
         # Produto indisponivel ou pagamento recusado: o Principal publica
         # pedido.excluido para que o Estoque devolva a reserva.
