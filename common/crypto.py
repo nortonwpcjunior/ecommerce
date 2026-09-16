@@ -68,7 +68,8 @@ class Verifier:
             raise AssinaturaInvalida(
                 f"assinatura de '{envelope.producer}' nao confere"
             ) from exc
-        #so apos este ponto o evento pode ser processado
+        # so apos este ponto o evento pode ser processado
+
 
 # gera, grava e carrega as chaves
 def generate_keypair():
