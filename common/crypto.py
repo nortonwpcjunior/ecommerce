@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa, utils
 
 
 class AssinaturaInvalida(Exception):
-    """Envelope reprovado na verificacao. O evento deve ser descartado."""
+    """Assinatura invalida. O evento sera descartado."""
 
 
 # Gera Hash
@@ -22,7 +22,6 @@ def sha256_hex(dados: bytes) -> str:
 
 # Assinatura (produtor)
 class Signer:
-    """Assina com a chave PRIVADA do microsservico produtor."""
 
     def __init__(self, private_key):
         self._key = private_key
@@ -37,7 +36,6 @@ class Signer:
 
 # Validacao (consumidor)
 class Verifier:
-    """Verifica com a chave PUBLICA do produtor declarado no envelope."""
 
     def __init__(self, public_keys: dict):
         self._keys = public_keys
@@ -94,7 +92,7 @@ def public_to_pem(key) -> bytes:
 def load_private(path: Path):
     if not path.exists():
         raise FileNotFoundError(
-            f"{path} nao existe. Rode primeiro: python -m tools.gen_keys"
+            f"{path} nao existe. As chaves devem ser geradas primeiro."
         )
     return serialization.load_pem_private_key(path.read_bytes(), password=None)
 
@@ -104,13 +102,11 @@ def load_public(path: Path):
 
 
 def load_public_keys(keys_dir: Path) -> dict:
-    """Carrega as chaves publicas de uma pasta keys/.
+    """Carrega as chaves publicas de uma pasta keys/"""
 
-    O nome do arquivo define o produtor: ms_estoque.pub.pem -> "ms_estoque".
-    """
     if not keys_dir.is_dir():
         raise FileNotFoundError(
-            f"{keys_dir} nao existe. Rode primeiro: python -m tools.gen_keys"
+            f"{keys_dir} nao existe. As chaves devem ser geradas primeiro."
         )
     chaves = {
         path.name.removesuffix(".pub.pem"): load_public(path)

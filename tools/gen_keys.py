@@ -1,15 +1,3 @@
-"""Gera os pares de chaves RSA-2048 e distribui as chaves publicas.
-
-Cada microsservico recebe, na sua pasta keys/:
-  - <nome>.key.pem       sua chave PRIVADA (nunca versionada, ver .gitignore)
-  - <outro>.pub.pem      a chave PUBLICA de todos os microsservicos
-
-Os consumidores de promocoes (C1 e C2) nao publicam nada, portanto recebem
-apenas a chave publica do ms_promocoes.
-
-Uso:  python -m tools.gen_keys [--force]
-"""
-
 import sys
 from pathlib import Path
 

@@ -1,21 +1,3 @@
-#!/usr/bin/env python3
-"""Microsservico Principal.
-
-    Consome:  pedido.estoque_ok, estoque.indisponivel, pagamento.aprovado,
-              pagamento.recusado, pedido.enviado
-    Publica:  pedido.criado, pedido.excluido
-
-Unico microsservico com DUAS threads:
-  - thread de fundo: consumidor, atualiza o status dos pedidos;
-  - thread principal: menu de terminal, cria e exclui pedidos.
-
-Duas regras que nao podem ser violadas aqui:
-  1. cada thread tem a SUA conexao com o broker (pika nao e thread-safe);
-  2. todo acesso ao STORE passa pelo lock, porque as duas threads o tocam --
-     e publicar SEMPRE fora do lock, para nao prender a thread do menu
-     durante a ida ao broker.
-"""
-
 import logging
 import random
 import string
@@ -36,15 +18,6 @@ log = logging.getLogger(NOME)
 
 
 class Status(StrEnum):
-    """Status interno do pedido, com o rotulo exibido ao usuario.
-
-    O valor do membro e o nome interno -- e o que vai para o STORE e o que o
-    `startswith("CANCELADO")` do menu testa. O rotulo fica no mesmo lugar, em
-    vez de num dicionario paralelo que pode sair de sincronia.
-    """
-
-    # Anotacao sem valor: o enum nao a trata como membro, e o type checker
-    # passa a conhecer o atributo que o __new__ preenche.
     rotulo: str
 
     def __new__(cls, valor: str, rotulo: str) -> "Status":
@@ -62,14 +35,11 @@ class Status(StrEnum):
     CANCELADO_USUARIO = "CANCELADO_USUARIO", "CANCELADO - excluido pelo usuario"
 
 
-# Sufixo aleatorio por execucao do processo. Sem ele, reiniciar o ms_principal
-# reinicia o contador em 1 e os novos pedidos colidem com os IDs que o
-# ms_estoque e o ms_pagamento ainda mantem em memoria.
+# Sufixo aleatorio para evitar colisao de IDsß.
 SESSAO = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
 
 
 class PedidoStore:
-    """Estado dos pedidos, compartilhado entre a thread do menu e a do consumidor."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -92,13 +62,6 @@ class PedidoStore:
             }
 
     def atualizar(self, pedido_id, status, detalhe="") -> bool:
-        """Atualiza um pedido conhecido. Devolve False se o ID for desconhecido.
-
-        Nao cria pedido a partir de evento recebido: o ms_principal e a unica
-        origem de pedidos. Um evento para ID desconhecido significa broker com
-        mensagem antiga, outro Principal no ar ou evento injetado -- deve ser
-        registrado e ignorado, nunca virar um pedido na lista do usuario.
-        """
         with self._lock:
             pedido = self._pedidos.get(pedido_id)
             if pedido is None:
@@ -113,7 +76,6 @@ class PedidoStore:
             return pedido["status"] if pedido else None
 
     def rotulo_de(self, pedido_id) -> str:
-        """Rotulo do status, ou '?' se o pedido nao existir."""
         status = self.status_de(pedido_id)
         return status.rotulo if status is not None else "?"
 
@@ -125,10 +87,7 @@ class PedidoStore:
 STORE = PedidoStore()
 
 
-# --------------------------------------------------------------------------
-# Thread de fundo: consumidor de eventos
-# --------------------------------------------------------------------------
-
+# Thread consumidora de eventos
 class MsPrincipal(Microservice):
     name = NOME
     queue = "fila.principal"
@@ -151,8 +110,6 @@ class MsPrincipal(Microservice):
 
         cancelar_com = None
 
-        # `case Evento.X` e padrao de VALOR porque o nome e pontilhado. Um
-        # `case X` simples seria padrao de CAPTURA e casaria com tudo.
         match event:
             case Evento.PEDIDO_ESTOQUE_OK:
                 STORE.atualizar(pedido_id, Status.ESTOQUE_RESERVADO)
@@ -178,9 +135,6 @@ class MsPrincipal(Microservice):
 
         log.info(f"pedido {pedido_id} -> {STORE.rotulo_de(pedido_id)}")
 
-        # Produto indisponivel ou pagamento recusado: o Principal publica
-        # pedido.excluido para que o Estoque devolva a reserva.
-        # Fora de qualquer lock.
         if cancelar_com is not None:
             self.publish(EX_ECOMMERCE, Evento.PEDIDO_EXCLUIDO, {
                 "pedidoId": pedido_id,
@@ -189,15 +143,8 @@ class MsPrincipal(Microservice):
             })
 
 
-# --------------------------------------------------------------------------
-# Thread principal: menu de terminal (print, nao log -- e interface)
-# --------------------------------------------------------------------------
-
+# Thread principal: menu
 def ler(prompt: str):
-    """input() que devolve None em Ctrl+D / Ctrl+C, em vez de estourar.
-
-    Sem isso, um Ctrl+D dentro de um submenu derruba o processo com traceback.
-    """
     try:
         return input(prompt).strip()
     except (EOFError, KeyboardInterrupt):
@@ -216,12 +163,11 @@ def mostrar_produtos():
 
 
 def ler_itens():
-    """Le pares produto/quantidade ate uma linha vazia."""
     itens = {}
     print("\nInforme os itens (ENTER vazio para terminar).")
     while True:
         entrada = ler("  produto [qtd]: ")
-        if not entrada:      # linha vazia, Ctrl+D ou Ctrl+C: encerra a lista
+        if not entrada:
             break
         partes = entrada.split()
         produto_id = partes[0].upper()
@@ -252,7 +198,6 @@ def realizar_pedido(publisher, cliente):
         PRODUTOS[i["produtoId"]]["preco"] * i["quantidade"] for i in itens
     ), 2)
     pedido_id = STORE.novo_id()
-    # Registra ANTES de publicar: a resposta pode voltar antes do print.
     STORE.registrar(pedido_id, cliente, itens, total)
 
     print(f"\nPedido {pedido_id} criado -- total R$ {total:.2f}")
@@ -320,12 +265,11 @@ MENU = """
 
 
 def main():
-    # Thread do consumidor: conexao propria, criada dentro de MsPrincipal.
+    # Inicializa a thread do consumidor.
     servico = MsPrincipal()
     threading.Thread(target=servico.start, name="consumidor", daemon=True).start()
 
-    # Thread do menu: Publisher com conexao propria e heartbeat desligado,
-    # porque fica ociosa enquanto o usuario le o menu.
+    # Inicializa a thread do Publisher
     publisher = Publisher(NOME)
 
     cliente = ler("\nSeu nome (ENTER para 'cliente1'): ") or "cliente1"

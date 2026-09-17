@@ -1,10 +1,4 @@
-"""Infraestrutura de mensageria: conexao, topologia, publicacao e consumo.
-
-Regra de ouro do pika: uma BlockingConnection NAO e thread-safe. Cada thread
-que fala com o broker precisa da sua propria conexao. E por isso que o
-ms_principal abre uma conexao para o consumidor (thread de fundo) e outra para
-o menu (thread principal).
-"""
+"""Infraestrutura de mensageria: conexao, topologia, publicacao e consumo."""
 
 import logging
 import os
@@ -28,9 +22,9 @@ from common.envelope import Envelope
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# As duas exchanges exigidas pelo enunciado. Nenhuma fanout.
-EX_ECOMMERCE = "eCommerce"      # tipo direct -> casamento exato da routing key
-EX_PROMOCOES = "Promocoes"      # tipo topic  -> casamento por padrao (* e #)
+# As duas exchanges, sem fanout.
+EX_ECOMMERCE = "eCommerce"  # tipo direct
+EX_PROMOCOES = "Promocoes"  # tipo topic
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +35,7 @@ def configurar_log(nome_processo: str) -> None:
         format=f"%(asctime)s [{nome_processo}] %(message)s",
         datefmt="%H:%M:%S",
     )
-    logging.getLogger("pika").setLevel(logging.WARNING)  # pika e muito verboso
+    logging.getLogger("pika").setLevel(logging.WARNING)
 
 
 def keys_dir(nome_processo: str) -> Path:
@@ -49,14 +43,7 @@ def keys_dir(nome_processo: str) -> Path:
 
 
 def connect(heartbeat: int = 60) -> tuple[pika.BlockingConnection, BlockingChannel]:
-    """Abre conexao e canal.
-
-    heartbeat=0 desliga o heartbeat. Use em conexoes que ficam ociosas por
-    muito tempo: o pika so processa heartbeats quando o codigo chama a
-    biblioteca, e a thread do menu fica parada em input(). Com heartbeat
-    ligado, o broker derruba a conexao por timeout e a proxima publicacao
-    falha com StreamLostError.
-    """
+    """Abre conexao e canal."""
     params = pika.ConnectionParameters(
         host=os.getenv("RABBIT_HOST", "localhost"),
         port=int(os.getenv("RABBIT_PORT", "5672")),
@@ -82,26 +69,14 @@ def declare_topology(canal) -> None:
     canal.exchange_declare(EX_PROMOCOES, exchange_type="topic", durable=True)
 
 
-# --------------------------------------------------------------------------
-# Publicacao
-# --------------------------------------------------------------------------
-
 class Publisher:
-    """Publica eventos assinados com a chave privada do processo.
-
-    Com `canal` informado, reutiliza o canal de um consumidor existente
-    (obrigatorio ao publicar de dentro de um callback de consumo, para nao
-    misturar conexoes na mesma thread). Sem canal, abre conexao propria com
-    heartbeat desligado.
-    """
+    """Publica os eventos assinados"""
 
     def __init__(self, nome: str, canal: BlockingChannel | None = None):
         self.nome = nome
         self.signer = Signer(load_private(keys_dir(nome) / f"{nome}.key.pem"))
         self._canal_emprestado = canal is not None
         self._conexao: pika.BlockingConnection | None = None
-        # Declarado sem valor: e sempre preenchido nos dois ramos abaixo, entao
-        # nao e Optional -- o type checker nao precisa de guarda em publish().
         self._canal: BlockingChannel
         if canal is None:
             self._abrir()
@@ -133,7 +108,7 @@ class Publisher:
             self._canal.basic_publish(exchange, routing_key, corpo, propriedades)
         except (pika.exceptions.AMQPError, pika.exceptions.StreamLostError):
             if self._canal_emprestado:
-                raise  # o dono do canal (o consumidor) cuida da reconexao
+                raise  # o consumidor cuida da reconexao
             log.warning("conexao de publicacao caiu; reconectando")
             self._abrir()
             self._canal.basic_publish(exchange, routing_key, corpo, propriedades)
@@ -149,21 +124,13 @@ class Publisher:
                 pass
 
 
-# --------------------------------------------------------------------------
-# Consumo
-# --------------------------------------------------------------------------
-
 class Microservice:
-    """Base de todo microsservico: consome, verifica a assinatura e despacha.
-
-    Subclasses definem name, queue e bindings, e implementam handle().
-    Eventos com assinatura invalida sao descartados sem chegar ao handle().
-    """
+    """Base de todo microsservico: consome, verifica a assinatura e despacha."""
 
     name = ""
     queue = ""
-    bindings: list[tuple[str, str]] = []   # (exchange, routing_key)
-    publica = True  # False para consumidores que nunca publicam (sem chave privada)
+    bindings: list[tuple[str, str]] = []  # [exchange, routing_key]
+    publica = True
 
     def __init__(self):
         configurar_log(self.name)
@@ -171,16 +138,13 @@ class Microservice:
         self.verifier = Verifier(load_public_keys(keys_dir(self.name)))
         self.publisher = Publisher(self.name, canal=self.channel) if self.publica else None
 
-    # ---- ciclo de vida -------------------------------------------------
-
     def setup(self) -> None:
         declare_topology(self.channel)
-        # Cada consumidor cria a SUA propria fila e faz os bindings dela.
+        # Cada consumidor cria a sua propria fila e faz os bindings dela.
         self.channel.queue_declare(self.queue, durable=True)
         for exchange, routing_key in self.bindings:
             self.channel.queue_bind(self.queue, exchange, routing_key)
             log.info(f"binding: {self.queue} <- '{routing_key}' ({exchange})")
-        # Um evento por vez: ordem de processamento previsivel.
         self.channel.basic_qos(prefetch_count=1)
 
     def start(self) -> None:
@@ -200,8 +164,7 @@ class Microservice:
                 pass
             log.info("encerrado")
 
-    # ---- consumo -------------------------------------------------------
-
+    # Funcao para consumo de mensagens
     def _ao_receber(self, canal, method, propriedades, corpo) -> None:
         tag = method.delivery_tag
 
@@ -213,15 +176,14 @@ class Microservice:
             canal.basic_nack(tag, requeue=False)
             return
 
-        # A routing key da entrega tem de casar com o evento assinado, senao
-        # um envelope valido poderia ser reencaminhado para outra fila.
+        # A routing key da entrega tem que casar com o evento assinado
         if envelope.event != method.routing_key:
             log.error(f"routing key '{method.routing_key}' diferente do evento "
                       f"assinado '{envelope.event}': DESCARTADO")
             canal.basic_nack(tag, requeue=False)
             return
 
-        # Validacao da assinatura ANTES de qualquer processamento.
+        # Valida a assinatura antes do processamento.
         try:
             self.verifier.verificar(envelope)
         except AssinaturaInvalida as exc:
@@ -235,7 +197,6 @@ class Microservice:
         try:
             self.handle(envelope.event, envelope.payload)
         except Exception:
-            # Sem requeue: o evento voltaria em loop e travaria a fila.
             log.exception(f"erro ao processar {envelope.event}: evento DESCARTADO")
             canal.basic_nack(tag, requeue=False)
             return
@@ -245,8 +206,7 @@ class Microservice:
     def handle(self, event: str, payload: dict) -> None:
         raise NotImplementedError
 
-    # ---- atalho de publicacao -----------------------------------------
-
+    # Atalho de publicacao
     def publish(self, exchange: str, routing_key: str, payload: dict) -> None:
         if self.publisher is None:
             raise RuntimeError(f"{self.name} foi criado com publica=False")

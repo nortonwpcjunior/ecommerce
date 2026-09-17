@@ -1,15 +1,8 @@
-#!/usr/bin/env python3
-"""Consumidor C1 -- interessado nas categorias A e B.
-
-Fila propria (fila.C1) com dois bindings exatos na exchange topic.
-"""
-
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from common.eventos import promocao_de  # noqa: E402
 from common.promocao import ConsumidorPromocoes  # noqa: E402
 from common.service import EX_PROMOCOES  # noqa: E402
 
@@ -18,8 +11,8 @@ class ConsumidorC1(ConsumidorPromocoes):
     name = "consumidor_c1"
     queue = "fila.C1"
     bindings = [
-        (EX_PROMOCOES, promocao_de("A")),
-        (EX_PROMOCOES, promocao_de("B")),
+        (EX_PROMOCOES, "promocao.categoria.A"),
+        (EX_PROMOCOES, "promocao.categoria.B"),
     ]
 
 

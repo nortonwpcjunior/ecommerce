@@ -47,7 +47,7 @@ A assinatura cobre os **quatro** primeiros campos, nao apenas o `payload`
 ```
 ecommerce-mom/
 ├── common/
-│   ├── eventos.py        # Evento (StrEnum): fonte unica das routing keys
+│   ├── eventos.py        # Evento (StrEnum): routing keys da exchange eCommerce
 │   ├── envelope.py       # Envelope + serializacao canonica (canon)
 │   ├── crypto.py         # hash, assinatura, verificacao, chaves
 │   ├── service.py        # conexao, topologia, Publisher, Microservice
@@ -292,9 +292,18 @@ pergunta "e se alguem forjar um evento?". Exige `ms_estoque` e `ms_entrega` no a
 | `RABBIT_HOST` / `RABBIT_PORT` | `localhost` / `5672` | endereco do broker |
 | `RABBIT_USER` / `RABBIT_PASS` | `guest` / `guest` | credenciais do broker |
 
-A latencia do pagamento e da emissao da nota e fixa (`time.sleep(1)` em
-`ms_pagamento` e `ms_entrega`), o suficiente para os estados intermediarios
-aparecerem no menu durante a demonstracao.
+Nao ha latencia artificial no processamento: o fluxo completo, de
+`pedido.criado` ate `pedido.enviado`, termina em cerca de 15 ms. Os estados
+intermediarios (`ESTOQUE_RESERVADO`, `PAGAMENTO_APROVADO`) existem e aparecem
+nos logs, mas duram pouco demais para serem vistos em "Consultar meus pedidos"
+-- na pratica o menu ja mostra o pedido em `ENVIADO`.
+
+Para acompanhar a cadeia de eventos na demonstracao, use os logs dos processos
+(`./run_services.sh logs`, ou os 7 terminais separados): cada publicacao e cada
+consumo aparecem com horario, produtor e hash. E o registro mais convincente de
+que a comunicacao e indireta, porque mostra o evento saindo de um processo e
+entrando em outro. Para deixar um estado intermediario visivel no menu, insira
+um `time.sleep()` no `handle()` do `ms_pagamento` ou do `ms_entrega`.
 
 Estoque inicial (em `ms_estoque/main.py`): `P1=10 P2=5 P3=0 P4=3 P5=7 P6=2`.
 O `P3` comeca zerado de proposito -- e o caminho mais rapido para demonstrar
@@ -375,15 +384,22 @@ consultar sem chamada direta, que o enunciado proibe.
 privada. Nao podem publicar nada nem falar com microsservico algum, so com o
 broker.
 
-**17. As routing keys vivem em um `StrEnum`** (`common/eventos.py`). Antes
-cada nome aparecia como string literal solta em varios arquivos
-(`pedido.criado` 13 vezes, `pedido.estoque_ok` e `pagamento.aprovado` 8 cada).
-Um erro de digitacao ali e um bug silencioso: o evento sai numa chave que
-nenhuma fila escuta, ou um binding nunca casa, e nada estoura -- o pedido so
-para de andar. Como `StrEnum` herda de `str`, o membro serve direto como
-routing key do pika e como valor do campo `event`: a serializacao canonica
-produz os mesmos bytes e a assinatura nao muda (o hash do `tools.test_crypto`
-e o mesmo de antes da mudanca).
+**17. As routing keys da exchange `eCommerce` vivem em um `StrEnum`**
+(`common/eventos.py`). Antes cada nome aparecia como string literal solta em
+varios arquivos (`pedido.criado` 13 vezes, `pedido.estoque_ok` e
+`pagamento.aprovado` 8 cada). Um erro de digitacao ali e um bug silencioso: o
+evento sai numa chave que nenhuma fila escuta, ou um binding nunca casa, e nada
+estoura -- o pedido so para de andar. Como `StrEnum` herda de `str`, o membro
+serve direto como routing key do pika e como valor do campo `event`: a
+serializacao canonica produz os mesmos bytes e a assinatura nao muda (o hash do
+`tools.test_crypto` e o mesmo de antes da mudanca).
+
+As chaves de **promocao** ficam de fora do enum e sao escritas literalmente em
+`ms_promocoes`, `consumidor_c1` e `consumidor_c2`. A do produtor e montada em
+tempo de execucao (`f"promocao.categoria.{categoria}"`, com a categoria vinda
+do catalogo) e as dos consumidores sao padroes de binding, inclusive o curinga
+`promocao.categoria.*` do C2 -- nenhuma das tres e um valor fixo que caiba num
+enum fechado.
 
 **18. O `Status` carrega o rotulo exibido** em vez de existir um dicionario
 `STATUS` paralelo, que podia sair de sincronia com os status usados no codigo.

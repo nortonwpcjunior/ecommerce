@@ -1,19 +1,8 @@
-#!/usr/bin/env python3
-"""Microsservico Estoque.
-
-    Consome:  pedido.criado, pedido.excluido      (exchange eCommerce, direct)
-    Publica:  pedido.estoque_ok, estoque.indisponivel
-
-Nao ha Lock protegendo o estado: o pika entrega as mensagens uma a uma na
-mesma thread, entao os handlers nunca rodam em paralelo aqui.
-"""
-
 import logging
 import sys
 from pathlib import Path
 from typing import override
 
-# Permite rodar como `python ms_estoque/main.py` ou `python -m ms_estoque.main`.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.eventos import Evento  # noqa: E402
@@ -21,9 +10,6 @@ from common.service import EX_ECOMMERCE, Microservice  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-# As quantidades existem APENAS aqui. O catalogo compartilhado tem so os dados
-# cadastrais do produto -- por isso o menu do Principal nao mostra saldo: nao
-# ha como consultar sem chamada direta, que o enunciado proibe.
 ESTOQUE_INICIAL = {"P1": 10, "P2": 5, "P3": 0, "P4": 3, "P5": 7, "P6": 2}
 
 
@@ -38,7 +24,7 @@ class MsEstoque(Microservice):
     def __init__(self):
         super().__init__()
         self.estoque = dict(ESTOQUE_INICIAL)
-        self.reservas = {}  # pedido_id -> lista de itens reservados
+        self.reservas = {}
 
     def setup(self):
         super().setup()
@@ -46,27 +32,22 @@ class MsEstoque(Microservice):
 
     @override
     def handle(self, event, payload):
-        # `case Evento.X` e padrao de VALOR porque o nome e pontilhado. Um
-        # `case X` simples seria padrao de CAPTURA e casaria com tudo.
         match event:
             case Evento.PEDIDO_CRIADO:
                 self._pedido_criado(payload)
             case Evento.PEDIDO_EXCLUIDO:
                 self._pedido_excluido(payload)
 
-    # ---- pedido.criado -------------------------------------------------
-
     def _pedido_criado(self, pedido):
         pedido_id = pedido["pedidoId"]
         itens = pedido["itens"]
 
-        # Idempotencia: a entrega do RabbitMQ e at-least-once, um evento
-        # reentregue nao pode reservar duas vezes.
+        # Idempotencia
         if pedido_id in self.reservas:
             log.info(f"pedido {pedido_id} ja reservado -- ignorando duplicata")
             return
 
-        # Verifica TODOS os itens antes de dar qualquer baixa.
+        # Verifica todos os itens antes de remover do estoque.
         indisponiveis = [
             item for item in itens
             if self.estoque.get(item["produtoId"], 0) < item["quantidade"]
@@ -97,8 +78,6 @@ class MsEstoque(Microservice):
             "total": pedido.get("total", 0.0),
         })
 
-    # ---- pedido.excluido -----------------------------------------------
-
     def _pedido_excluido(self, evento):
         pedido_id = evento["pedidoId"]
         itens = self.reservas.pop(pedido_id, None)
@@ -113,8 +92,6 @@ class MsEstoque(Microservice):
             )
         log.info(f"devolvido ao estoque de {pedido_id}: {self._resumo(itens)}")
         self._mostrar_estoque("apos devolucao")
-
-    # ---- apoio ---------------------------------------------------------
 
     @staticmethod
     def _resumo(itens):

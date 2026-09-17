@@ -1,17 +1,7 @@
-#!/usr/bin/env python3
-"""Microsservico Pagamento.
-
-    Consome:  pedido.estoque_ok
-    Publica:  pagamento.aprovado, pagamento.recusado
-
-A aprovacao e simulada por variavel aleatoria (TAXA_APROVACAO, padrao 0.7).
-"""
-
 import logging
 import os
 import random
 import sys
-import time
 from pathlib import Path
 from typing import override
 
@@ -45,9 +35,6 @@ class MsPagamento(Microservice):
 
         pedido_id = payload["pedidoId"]
         valor = payload.get("total", 0.0)
-
-        log.info(f"processando pagamento de {pedido_id} (R$ {valor:.2f})...")
-        time.sleep(1)  # simula latencia da operadora
 
         if random.random() < TAXA_APROVACAO:
             autorizacao = f"AUT-{random.randint(0, 999999):06d}"
