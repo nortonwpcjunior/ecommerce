@@ -10,3 +10,17 @@ __pycache__/
 
 # Logs e PIDs gerados pelo run_services.sh (a pasta e recriada na execucao)
 logs/
+
+# Banco do ms_estoque e registro de interesses do ms_promocoes (estado local)
+ms_estoque/estoque.db*
+ms_promocoes/interesses.json
+
+# Segredos (RESEND_API_KEY etc). O .env.example e versionado.
+.env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Artefato de build do tsc
+frontend/tsconfig.tsbuildinfo

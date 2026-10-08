@@ -1,31 +1,82 @@
-# E-commerce distribuido com RabbitMQ
+# E-commerce distribuido: microsservicos, REST, SSE e RabbitMQ
 
 Trabalho de Sistemas Distribuidos (UTFPR / Profa. Ana Cristina Kochem Vendramin).
-Backend de e-commerce em **microsservicos**, **arquitetura orientada a eventos** e
-**assinatura digital com criptografia assimetrica**.
 
-Nenhum processo chama outro diretamente: toda a comunicacao passa pelo RabbitMQ.
+Aplicacao Web completa em **microsservicos**, com **arquitetura orientada a
+eventos** e **assinatura digital com criptografia assimetrica**. O Trab1 era um
+backend AMQP puro com menu de terminal; o Trab2 poe na frente dele um
+**frontend web**, um **API Gateway REST**, um canal **SSE** de notificacoes em
+tempo real, um **Mock de Pagamento** externo com **webhook** e uma **API
+externa de e-mail**.
 
----
+A regra do Trab1 continua valendo no miolo: **nenhum microsservico de negocio
+chama outro diretamente** -- tudo passa pelo RabbitMQ. O HTTP aparece so nas
+tres fronteiras que a arquitetura do Trab2 autoriza, e nenhuma delas carrega
+regra de negocio entre servicos:
+
+| Chamada HTTP | Por que nao e evento |
+|---|---|
+| frontend -> gateway (REST + SSE) | e a fronteira com o navegador |
+| gateway -> `ms_estoque` `GET /produtos` | leitura de catalogo, exigida pelo enunciado |
+| `ms_pagamento` -> Mock -> webhook | o provedor de pagamento e um sistema de terceiros |
+| `ms_promocoes` -> Resend | API externa de e-mail |
+
+## Arquitetura
+
+```
+                   navegador (React + Vite, :5173)
+                        |  REST          ^ SSE
+                        v                |
+         ms_principal / API Gateway (:8000) --REST--> ms_estoque (:8002)
+                        |                                  (SQLite)
+                 [ RabbitMQ :5672 ]
+             /          |           \            \
+      ms_estoque   ms_pagamento   ms_entrega   ms_promocoes
+                     |     ^                        |
+               REST  |     | Webhook          REST  v
+                     v     |                  api.resend.com
+              mock_pagamento (:8004)
+```
 
 ## Processos
 
-| Processo | Fila propria | Consome | Publica |
-|---|---|---|---|
-| `ms_principal` | `fila.principal` | `pedido.estoque_ok`, `estoque.indisponivel`, `pagamento.aprovado`, `pagamento.recusado`, `pedido.enviado` | `pedido.criado`, `pedido.excluido` |
-| `ms_estoque` | `fila.estoque` | `pedido.criado`, `pedido.excluido` | `pedido.estoque_ok`, `estoque.indisponivel` |
-| `ms_pagamento` | `fila.pagamento` | `pedido.estoque_ok` | `pagamento.aprovado`, `pagamento.recusado` |
-| `ms_entrega` | `fila.entrega` | `pagamento.aprovado` | `pedido.enviado` |
-| `ms_promocoes` | — | — | `promocao.categoria.{A,B,C}` |
-| `consumidor_c1` | `fila.C1` | `promocao.categoria.A`, `promocao.categoria.B` | — |
-| `consumidor_c2` | `fila.C2` | `promocao.categoria.*` | — |
+| Processo | Porta | Fila propria | Consome | Publica |
+|---|---|---|---|---|
+| `ms_principal` (gateway) | 8000 | `fila.principal` | `pedido.estoque_ok`, `estoque.indisponivel`, `pagamento.pendente`, `pagamento.aprovado`, `pagamento.recusado`, `pedido.enviado` | `pedido.criado`, `pedido.excluido`, `interesse.promocao` |
+| `ms_estoque` | 8002 | `fila.estoque` | `pedido.criado`, `pedido.excluido` | `pedido.estoque_ok`, `estoque.indisponivel` |
+| `ms_pagamento` | 8003 | `fila.pagamento` | `pedido.estoque_ok` | `pagamento.pendente`, `pagamento.aprovado`, `pagamento.recusado` |
+| `ms_entrega` | — | `fila.entrega` | `pagamento.aprovado` | `pedido.enviado` |
+| `ms_promocoes` | — | `fila.promocoes` | `interesse.promocao`, `promocao.categoria.*` | `promocao.categoria.{A,B,C}` |
+| `mock_pagamento` | 8004 | — (nao fala AMQP) | — | — |
+| `frontend` | 5173 | — | SSE do gateway | REST para o gateway |
 
 Exchanges: **`eCommerce`** (direct) e **`Promocoes`** (topic). Nenhuma fanout.
 Cada consumidor declara a SUA fila (`durable=True`) e faz os proprios bindings.
 
-C1 usa dois bindings exatos (`promocao.categoria.A` e `.B`); C2 usa um unico
-binding com curinga `*`, que casa exatamente uma palavra e portanto cobre
-qualquer categoria, inclusive as que venham a existir.
+O `ms_promocoes` tem **uma fila com dois bindings em exchanges diferentes**:
+recebe `interesse.promocao` da direct e `promocao.categoria.*` da topic. Ele
+consome a propria promocao que acabou de publicar -- e o que mantem geracao e
+notificacao desacopladas e preserva o topic exchange com curinga, que os
+consumidores C1/C2 do Trab1 demonstravam e que sairam da arquitetura do Trab2.
+
+## Endpoints REST
+
+Documentacao interativa (gerada pelo FastAPI): <http://localhost:8000/docs>.
+
+| Metodo | Rota | O que faz |
+|---|---|---|
+| `GET` | `/api/produtos` | lista produtos **com saldo**, consultando o `ms_estoque` via REST |
+| `POST` | `/api/pedidos` | cria o pedido e publica `pedido.criado` |
+| `GET` | `/api/pedidos?clienteId=` | pedidos do cliente |
+| `DELETE` | `/api/pedidos/{id}` | publica `pedido.excluido` (404 se nao existe, 409 se ja enviado/cancelado) |
+| `POST` | `/api/interesses` | publica `interesse.promocao` com `acao=registrar` |
+| `DELETE` | `/api/interesses?email=` | publica `interesse.promocao` com `acao=cancelar` |
+| `GET` | `/api/categorias` | categorias disponiveis |
+| `GET` | `/api/eventos/{clienteId}` | **SSE**: toda mudanca de estado dos pedidos do cliente |
+| `GET` | `/health` | diz se a thread do consumidor continua viva |
+
+Nos demais processos: `GET /produtos` (estoque), `POST /webhook/pagamento`
+(pagamento), `POST /cobrancas` + `GET /checkout/{id}` (mock).
 
 ## Envelope do evento
 
@@ -50,53 +101,72 @@ ecommerce-mom/
 │   ├── eventos.py        # Evento (StrEnum): routing keys da exchange eCommerce
 │   ├── envelope.py       # Envelope + serializacao canonica (canon)
 │   ├── crypto.py         # hash, assinatura, verificacao, chaves
-│   ├── service.py        # conexao, topologia, Publisher, Microservice
-│   ├── promocao.py       # base dos consumidores C1/C2 (publica=False)
+│   ├── service.py        # conexao, topologia, Publisher, PublisherHTTP, Microservice
+│   ├── http.py           # app FastAPI, lifespan com consumidor, cliente httpx
 │   └── catalogo.py       # dados cadastrais dos produtos (sem estoque)
+├── ms_principal/         # API Gateway: REST + SSE + consumidor
+│   ├── main.py           #   bootstrap (uvicorn)
+│   ├── api.py            #   rotas REST e SSE
+│   ├── consumidor.py     #   MsPrincipal: evento -> estado -> SSE
+│   ├── sse.py            #   barramento de assinantes
+│   ├── store.py          #   PedidoStore e Status
+│   └── keys/
+├── ms_estoque/           # consumidor + GET /produtos
+│   ├── main.py
+│   ├── estoque.py        #   persistencia SQLite (WAL)
+│   └── keys/
+├── ms_pagamento/         # consumidor + POST /webhook/pagamento
+├── ms_entrega/
+├── ms_promocoes/         # interesses + e-mail (Resend)
+│   ├── main.py
+│   ├── interesses.py
+│   └── notificacao.py
+├── mock_pagamento/       # sistema EXTERNO: sem chave, sem AMQP
+├── frontend/             # React + Vite + TypeScript
+│   └── src/
+│       ├── App.tsx  api.ts  useSSE.ts  types.ts  styles.css
+│       └── components/Catalogo.tsx  Pedidos.tsx  Promocoes.tsx
 ├── tools/
 │   ├── gen_keys.py       # gera os 5 pares e distribui as publicas
 │   ├── test_crypto.py    # 9 verificacoes de assinatura, sem broker
-│   ├── smoke_test.py     # fluxo ponta a ponta, sem menu
+│   ├── smoke_test.py     # fluxo ponta a ponta pela API, sem navegador
 │   └── test_assinatura_invalida.py
-├── ms_principal/         # menu do usuario + consumidor (2 threads)
-│   ├── main.py
-│   └── keys/             # ms_principal.key.pem + *.pub.pem dos demais
-├── ms_estoque/           ...
-├── ms_pagamento/         ...
-├── ms_entrega/           ...
-├── ms_promocoes/         ...
-├── consumidor_c1/        # so keys/ms_promocoes.pub.pem (nao publica)
-├── consumidor_c2/
-├── run_services.sh       # atalho bash (Linux/macOS)
-├── run_services.ps1      # atalho Windows (PowerShell)
-└── docker-compose.yml
+├── run_services.sh / .ps1
+├── docker-compose.yml
+└── .env.example
 ```
 
-## Fluxo dos eventos
+## Fluxo de um pedido
 
 ```
-        usuario
-           |  (menu no terminal)
-      ms_principal ---- pedido.criado -----------> ms_estoque
-           |                                            |
-           |<--------- pedido.estoque_ok ---------------|  (reserva os itens)
-           |<--------- estoque.indisponivel ------------|
-           |                                            ^
-           |--------- pedido.excluido ------------------'  (devolve a reserva)
-           |
-           |            ms_estoque -- pedido.estoque_ok --> ms_pagamento
-           |<--------- pagamento.aprovado --------------------|
-           |<--------- pagamento.recusado --------------------|
-           |
-           |         ms_pagamento -- pagamento.aprovado --> ms_entrega
-           |<--------- pedido.enviado ------------------------|
-
-    ms_promocoes -- promocao.categoria.X --> [C1: A e B]  [C2: *]
+  navegador --POST /api/pedidos--> gateway --pedido.criado--> ms_estoque
+      ^                               |                            |
+      |  SSE                          |<---- pedido.estoque_ok ----'
+      |                               |            |
+      |                               |            '--> ms_pagamento
+      |                               |                     |
+      |                               |                POST /cobrancas
+      |                               |                     v
+      |                               |              mock_pagamento
+      |<-- pagamento.pendente --------|<-- pagamento.pendente ---'
+      |      (checkoutUrl)            |
+      |                               |
+  usuario abre a aba e clica          |
+      |                               |
+      '--> mock --webhook--> ms_pagamento --pagamento.aprovado--> ms_entrega
+                                      |                                |
+      <------ SSE ------- gateway <---'<------- pedido.enviado --------'
 ```
 
-O `pedido.excluido` sai em tres situacoes: o usuario exclui pelo menu, o
-`ms_estoque` avisa `estoque.indisponivel`, ou o `ms_pagamento` recusa. Nos dois
-ultimos casos quem publica e o `ms_principal`, ao consumir o evento.
+O `pedido.excluido` sai em quatro situacoes: o usuario exclui pela tela, o
+`ms_estoque` avisa `estoque.indisponivel`, o `ms_pagamento` recusa, ou a
+cobranca nem chega a abrir porque o Mock esta fora. Nos tres ultimos casos quem
+publica e o `ms_principal`, ao consumir o evento.
+
+Uma diferenca pratica em relacao ao Trab1: la o fluxo inteiro terminava em
+~15 ms e os estados intermediarios nunca eram vistos. Agora o pedido **para** em
+`AGUARDANDO_PAGAMENTO` ate alguem clicar no Mock, entao cada transicao aparece
+na tela, uma a uma, pelo SSE.
 
 ---
 
@@ -109,47 +179,77 @@ docker compose up -d          # RabbitMQ em localhost:5672
                               # painel: http://localhost:15672 (guest/guest)
 ```
 
-Para apontar para outro endereco/porta: `RABBIT_HOST`, `RABBIT_PORT`,
-`RABBIT_USER`, `RABBIT_PASS`.
-
 ### 2. Dependencias e chaves
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m tools.gen_keys        # gera os 5 pares RSA-2048
+
+cd frontend && npm install && cd ..
 ```
 
 `gen_keys` coloca, em cada `<servico>/keys/`, a chave privada do servico e as
-chaves publicas de **todos** os microsservicos. C1 e C2 recebem apenas a publica
-do `ms_promocoes` (nao publicam nada). Rodar de novo nao sobrescreve: use
-`--force` se quiser novas chaves.
+chaves publicas de **todos** os microsservicos. Rodar de novo nao sobrescreve:
+use `--force` se quiser novas chaves. O `mock_pagamento` nao entra: ele e um
+sistema externo, nao publica no broker e nao tem chave.
 
-### 3. Os 7 processos
+### 3. Os 6 processos do backend + o frontend
 
-**Para a defesa, use 7 terminais** (torna visivel que sao processos independentes):
+**Para a defesa, use um terminal por processo** (torna visivel que sao
+processos independentes):
 
 ```bash
-.venv/bin/python -m ms_estoque.main
-.venv/bin/python -m ms_pagamento.main
+.venv/bin/python -m ms_estoque.main        # :8002
+.venv/bin/python -m mock_pagamento.main    # :8004
+.venv/bin/python -m ms_pagamento.main      # :8003
 .venv/bin/python -m ms_entrega.main
 .venv/bin/python -m ms_promocoes.main
-.venv/bin/python -m consumidor_c1.main
-.venv/bin/python -m consumidor_c2.main
-.venv/bin/python -m ms_principal.main      # este e a interface
+.venv/bin/python -m ms_principal.main      # :8000  (API Gateway)
+
+cd frontend && npm run dev                 # :5173  (a interface)
 ```
 
 Atalho durante o desenvolvimento:
 
 ```bash
-./run_services.sh start      # sobe os 6 nao-interativos em background (logs/)
+./run_services.sh start      # sobe os 6 do backend em background (logs/)
 ./run_services.sh logs       # acompanha todos os logs
 ./run_services.sh stop
-.venv/bin/python -m ms_principal.main
+cd frontend && npm run dev
 ```
 
----
+Abra <http://localhost:5173>.
 
+### 4. Variaveis de ambiente
+
+Copie `.env.example` para `.env` (ja ignorado pelo git) ou exporte na mao.
+
+| Variavel | Padrao | Efeito |
+|---|---|---|
+| `RESEND_API_KEY` | *(vazio)* | sem ela, o e-mail entra em **DRY-RUN** e so aparece no log |
+| `RESEND_FROM` | `onboarding@resend.dev` | remetente; o dominio padrao so entrega para o dono da conta |
+| `MOCK_WEBHOOK_SECRET` | `segredo-de-demonstracao` | segredo compartilhado entre o Mock e o webhook |
+| `INTERVALO_PROMOCAO` | `8` | segundos entre promocoes |
+| `GATEWAY_PORTA` / `PAGAMENTO_PORTA` / `MOCK_PORTA` | `8000` / `8003` / `8004` | portas HTTP |
+| `ESTOQUE_URL` / `MOCK_URL` | `localhost:8002` / `localhost:8004` | enderecos consultados |
+| `RABBIT_HOST` / `RABBIT_PORT` | `localhost` / `5672` | endereco do broker |
+| `RABBIT_USER` / `RABBIT_PASS` | `guest` / `guest` | credenciais do broker |
+
+**A chave do Resend nunca vai para o codigo nem para arquivo versionado.** Ela
+e lida da variavel de ambiente -- em producao, vinda de um gerenciador de
+segredos. O Resend autentica so por API key (nao oferece OAuth, service account
+nem IAM role), entao a variavel de ambiente e a melhor opcao disponivel. Sem
+ela o sistema roda inteiro, em DRY-RUN.
+
+### Estoque inicial
+
+`P1=10 P2=5 P3=0 P4=3 P5=7 P6=2`, semeado no SQLite no primeiro boot. O `P3`
+comeca zerado de proposito -- e o caminho mais rapido para demonstrar
+`estoque.indisponivel`. Para voltar ao estado inicial, apague
+`ms_estoque/estoque.db` com o servico parado.
+
+---
 ## Como rodar no Windows (RabbitMQ nativo, sem Docker)
 
 O Docker so e usado para subir o broker. No Windows da para instalar o RabbitMQ
@@ -195,27 +295,30 @@ broker: `net stop RabbitMQ` / `net start RabbitMQ`.
 py -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 .venv\Scripts\python -m tools.gen_keys
+
+cd frontend; npm install; cd ..
 ```
 
-### 4. Os 7 processos
+### 4. Os processos
 
 ```powershell
 .venv\Scripts\python -m ms_estoque.main
+.venv\Scripts\python -m mock_pagamento.main
 .venv\Scripts\python -m ms_pagamento.main
 .venv\Scripts\python -m ms_entrega.main
 .venv\Scripts\python -m ms_promocoes.main
-.venv\Scripts\python -m consumidor_c1.main
-.venv\Scripts\python -m consumidor_c2.main
-.venv\Scripts\python -m ms_principal.main      # este e a interface
+.venv\Scripts\python -m ms_principal.main
+
+cd frontend; npm run dev
 ```
 
 Atalho (o `run_services.sh` e bash; no Windows use o `.ps1`):
 
 ```powershell
-.\run_services.ps1 start     # sobe os 6 nao-interativos em background (logs\)
-.\run_services.ps1 logs      # acompanha todos os logs
+.\run_services.ps1 start     # sobe os 6 do backend em background (logs\)
+.\run_services.ps1 logs
 .\run_services.ps1 stop
-.venv\Scripts\python -m ms_principal.main
+cd frontend; npm run dev
 ```
 
 Se o PowerShell bloquear o script por politica de execucao:
@@ -224,10 +327,10 @@ Se o PowerShell bloquear o script por politica de execucao:
 O script nao exige a venv dentro do projeto. Ele procura o interpretador nesta
 ordem: `-Python <caminho>`, a variavel `PYTHON_EXE`, `.venv\Scripts\python.exe`,
 a venv ativada (`VIRTUAL_ENV`) e, por ultimo, o `python.exe` do PATH. Antes de
-subir qualquer processo ele testa `import pika, cryptography` no interpretador
-escolhido -- sem essa checagem, um Python errado subiria os 6 processos, todos
-morreriam no import e o erro ficaria escondido nas janelas ocultas. Para apontar
-para outra venv:
+subir qualquer processo ele testa `import pika, cryptography, fastapi, uvicorn,
+httpx` no interpretador escolhido -- sem essa checagem, um Python errado subiria
+os 6 processos, todos morreriam no import e o erro ficaria escondido nas janelas
+ocultas. Para apontar para outra venv:
 
 ```powershell
 .\run_services.ps1 start -Python C:\caminho\da\venv\Scripts\python.exe
@@ -240,15 +343,11 @@ vai para `logs\<servico>.out.log`. E a checagem de PID confere tambem o nome do
 processo, porque o Windows recicla PIDs rapido e um `stop` poderia derrubar
 outro programa.
 
-Variaveis de ambiente no PowerShell usam outra sintaxe. Para forcar recusa de
-pagamento na demonstracao:
+Variaveis de ambiente no PowerShell usam outra sintaxe:
 
 ```powershell
-$env:TAXA_APROVACAO="0"; .venv\Scripts\python -m ms_pagamento.main
+$env:INTERVALO_PROMOCAO="3"; .venv\Scripts\python -m ms_promocoes.main
 ```
-
-O mesmo vale para `INTERVALO_PROMOCAO`, `RABBIT_HOST`, `RABBIT_PORT`,
-`RABBIT_USER` e `RABBIT_PASS`.
 
 ### Problemas classicos no Windows
 
@@ -258,66 +357,68 @@ O mesmo vale para `INTERVALO_PROMOCAO`, `RABBIT_HOST`, `RABBIT_PORT`,
 | `rabbitmqctl` da erro de autenticacao (cookie) | O servico usa `C:\Windows\System32\config\systemprofile\.erlang.cookie` e a sua sessao usa `%USERPROFILE%\.erlang.cookie`. Copie o primeiro por cima do segundo e reinicie o servico. |
 | Nome de usuario do Windows com acento ou espaco | O RabbitMQ engasga com o caminho do `%APPDATA%`. Defina `RABBITMQ_BASE=C:\RabbitMQ` nas variaveis de ambiente do sistema e reinstale o servico. |
 | `[ERRO] Nao foi possivel conectar ao RabbitMQ` | A mensagem sugere `docker compose up -d`; aqui basta conferir `net start RabbitMQ`. |
+| Porta 8000/8002/8003/8004 ocupada | Outro processo ja usa a porta. Troque pelas variaveis `GATEWAY_PORTA`, `PAGAMENTO_PORTA`, `MOCK_PORTA`. |
 
 ---
-
 ## Ferramentas de verificacao
 
 ```bash
-.venv/bin/python -m tools.test_crypto              # assina/verifica sem broker
-.venv/bin/python -m tools.smoke_test P1 2          # fluxo ponta a ponta, sem menu
-.venv/bin/python -m tools.test_assinatura_invalida # prova que evento forjado e descartado
+.venv/bin/python -m tools.test_crypto                   # assina/verifica sem broker
+.venv/bin/python -m tools.smoke_test P1 2 aprovado      # fluxo completo pela API
+.venv/bin/python -m tools.smoke_test P6 1 recusado      # caminho da recusa
+.venv/bin/python -m tools.smoke_test P3 1               # caminho do sem-estoque
+.venv/bin/python -m tools.test_assinatura_invalida      # evento forjado e descartado
 ```
 
 `test_crypto` roda 9 verificacoes de assinatura sem precisar do broker
 (payload adulterado, evento trocado, timestamp remarcado, produtor falso,
 produtor sem chave, envelope sem assinatura e round-trip JSON).
 
+`smoke_test` faz o fluxo inteiro pela API REST, sem navegador: cria o pedido,
+espera a `checkoutUrl` chegar e **simula o clique** no Mock pelo mesmo endpoint
+que a pagina usa -- entao o caminho exercitado e exatamente o da demonstracao.
+O terceiro argumento escolhe `aprovado` ou `recusado`.
+
 `test_assinatura_invalida` publica quatro eventos -- legitimo, payload
 adulterado, assinado com a chave de outro servico, e um evento substituido
-(payload legitimo de `pedido.estoque_ok` republicado como
-`pagamento.aprovado`) -- e apenas o primeiro e processado. Bom roteiro para a
-pergunta "e se alguem forjar um evento?". Exige `ms_estoque` e `ms_entrega` no ar.
+(payload legitimo de `pedido.criado` republicado como `pagamento.aprovado`) --
+e apenas o primeiro e processado. Bom roteiro para a pergunta "e se alguem
+forjar um evento?". Exige `ms_estoque` e `ms_entrega` no ar.
 
-`smoke_test` sobe um consumidor `ms_principal` embutido, publica um
-`pedido.criado` e espera o status chegar a um estado terminal (`ENVIADO`,
-`CANCELADO_SEM_ESTOQUE` ou `CANCELADO_PAGAMENTO`), com timeout de 30s.
+Checagens rapidas de saude:
 
-### Variaveis de simulacao
+```bash
+curl localhost:8000/health      # consumidor_vivo: a thread do pika ainda roda?
+curl localhost:8002/produtos    # saldo persistido
+curl -N localhost:8000/api/eventos/cli-demo   # acompanha o SSE no terminal
+```
 
-| Variavel | Padrao | Efeito |
-|---|---|---|
-| `TAXA_APROVACAO` | `0.7` | chance de o pagamento ser aprovado; `0` forca recusa, `1` forca aprovacao |
-| `INTERVALO_PROMOCAO` | `8` | segundos entre promocoes |
-| `RABBIT_HOST` / `RABBIT_PORT` | `localhost` / `5672` | endereco do broker |
-| `RABBIT_USER` / `RABBIT_PASS` | `guest` / `guest` | credenciais do broker |
+E o `GET /health` responde `consumidor_vivo` de proposito: sem ele, a thread do
+consumidor poderia morrer e o processo seguir respondendo 200 em todas as rotas
+sem processar evento nenhum.
 
-Nao ha latencia artificial no processamento: o fluxo completo, de
-`pedido.criado` ate `pedido.enviado`, termina em cerca de 15 ms. Os estados
-intermediarios (`ESTOQUE_RESERVADO`, `PAGAMENTO_APROVADO`) existem e aparecem
-nos logs, mas duram pouco demais para serem vistos em "Consultar meus pedidos"
--- na pratica o menu ja mostra o pedido em `ENVIADO`.
+### Tipagem
 
-Para acompanhar a cadeia de eventos na demonstracao, use os logs dos processos
-(`./run_services.sh logs`, ou os 7 terminais separados): cada publicacao e cada
-consumo aparecem com horario, produtor e hash. E o registro mais convincente de
-que a comunicacao e indireta, porque mostra o evento saindo de um processo e
-entrando em outro. Para deixar um estado intermediario visivel no menu, insira
-um `time.sleep()` no `handle()` do `ms_pagamento` ou do `ms_entrega`.
+```bash
+MYPYPATH=. mypy --explicit-package-bases --ignore-missing-imports \
+    common tools ms_principal ms_estoque ms_pagamento ms_entrega \
+    ms_promocoes mock_pagamento
+cd frontend && npx tsc -b           # o frontend em strict mode
+```
 
-Estoque inicial (em `ms_estoque/main.py`): `P1=10 P2=5 P3=0 P4=3 P5=7 P6=2`.
-O `P3` comeca zerado de proposito -- e o caminho mais rapido para demonstrar
-`estoque.indisponivel`.
+O `--explicit-package-bases` e necessario porque os servicos tem arquivos
+`main.py` homonimos e o projeto nao usa `__init__.py`.
 
 ---
-
 ## Decisoes de projeto (o que defender)
+
+### Seguranca e mensageria (herdado do Trab1, ainda valendo)
 
 **1. A assinatura cobre `producer` + `event` + `timestamp` + `payload`**, nao
 apenas o payload. Assinando so o payload, um atacante pega um envelope valido,
 troca a routing key e o campo `event`, e reaproveita a assinatura: um payload
-assinado para `pedido.estoque_ok` passa como `pagamento.aprovado` e o
-`ms_entrega` emite nota fiscal de um pedido nunca pago. Ver
+assinado para `pedido.criado` passa como `pagamento.aprovado` e o `ms_entrega`
+emite nota fiscal de um pedido nunca pago. Ver
 `tools/test_assinatura_invalida.py`, caso 4.
 
 **2. Serializacao canonica (`canon`)**: `sort_keys=True` e sem espacos. Os
@@ -325,123 +426,188 @@ mesmos dados produzem sempre os mesmos bytes, no produtor e no consumidor.
 
 **3. O hash e calculado explicitamente** (`sha256_digest`) e a assinatura usa
 `utils.Prehashed`. Os tres passos do enunciado ficam separados no codigo:
-gerar o hash, assinar com a privada, por no campo `signature`. O hash aparece
-tambem nos logs de publicacao, para conferencia na demonstracao.
+gerar o hash, assinar com a privada, por no campo `signature`.
 
 **4. A assinatura e verificada ANTES de processar**, em
 `Microservice._ao_receber`. Assinatura invalida -> `basic_nack(requeue=False)`:
-o evento e descartado e nunca chega ao `handle()`. O mesmo vale para corpo que
-nao e JSON valido ou envelope sem os campos obrigatorios.
+o evento e descartado e nunca chega ao `handle()`.
 
-**5. A routing key da entrega tem de casar com o `event` assinado.** Defesa
-extra: um envelope valido reencaminhado para outra fila e recusado.
+**5. A routing key da entrega tem de casar com o `event` assinado.** Um
+envelope valido reencaminhado para outra fila e recusado.
 
 **6. Excecao dentro do `handle()` tambem descarta o evento**, sem requeue. Com
-requeue o mesmo evento voltaria em loop e travaria a fila -- o erro fica no log
-(`log.exception`) e a fila segue andando.
+requeue o mesmo evento voltaria em loop e travaria a fila.
 
-**7. `heartbeat=0` na conexao de publicacao.** O pika so processa heartbeats
-quando o codigo chama a biblioteca, e a thread do menu fica parada em
-`input()`. Com heartbeat ligado, o broker derruba a conexao por timeout e o
-proximo pedido falha com `StreamLostError` -- acontece em ~2 minutos de menu
-aberto. A conexao do consumidor mantem `heartbeat=60`, porque ela nunca fica
-ociosa dentro da biblioteca.
+**7. `prefetch_count=1`**: um evento por vez por consumidor. Alem da ordem
+previsivel, e o que torna seguro bombear a conexao durante uma chamada HTTP
+(item 13).
 
-**8. O `Publisher` reconecta** se a conexao propria cair. Quando o canal e
-emprestado do consumidor, a excecao sobe: quem reconecta e o dono do canal.
+**8. Filas duraveis e mensagens persistentes** (`delivery_mode=2`).
 
-**9. O `ms_principal` usa DUAS conexoes.** O `BlockingConnection` do pika nao e
-thread-safe. A thread do consumidor usa a conexao de `Microservice`; a thread
-do menu usa um `Publisher` com conexao propria. E publicar sempre FORA do
-lock, para nao prender a thread do menu durante a ida ao broker.
+**9. Idempotencia em todos os servicos com efeito colateral.** `ms_estoque`
+nao reserva duas vezes, `ms_entrega` nao emite duas notas e -- novidade do
+Trab2 -- o `ms_pagamento` nao publica dois resultados para o mesmo pedido.
+Necessario porque a entrega do RabbitMQ e at-least-once, e porque **o usuario
+pode clicar duas vezes no Mock**.
 
-**10. `prefetch_count=1`**: um evento por vez por consumidor, ordem de
-processamento previsivel. E a razao de o `ms_estoque` nao precisar de `Lock`:
-os handlers nunca rodam em paralelo la.
+**10. O ID do pedido leva um sufixo de sessao** (`PED-A3F1-001`), para o
+contador reiniciado nao colidir com o estado que os outros servicos mantem.
 
-**11. Filas duraveis e mensagens persistentes** (`delivery_mode=2`): derrubar
-um microsservico nao perde eventos, ele reprocessa ao voltar.
+### REST, SSE e threads (o que o Trab2 trouxe)
 
-**12. O ID do pedido leva um sufixo de sessao** (`PED-A3F1-001`). Sem isso,
-reiniciar o `ms_principal` reinicia o contador em 1 e os IDs colidem com o
-estado que `ms_estoque` e `ms_pagamento` ainda mantem em memoria.
+**11. `pagamento.pendente` e um evento novo, fora da lista do enunciado.** A
+URL de checkout nasce no `ms_pagamento` e precisa chegar ao navegador. O
+`ms_pagamento` nao fala com o frontend, e o gateway e o unico que mantem SSE --
+entao o unico caminho possivel e RabbitMQ -> gateway -> SSE. A alternativa
+seria o `POST /api/pedidos` esperar a cadeia estoque->pagamento->mock de forma
+sincrona, o que destruiria o modelo assincrono.
 
-**13. Evento para pedido desconhecido e registrado e ignorado.** O
-`ms_principal` e a unica origem de pedidos; um `pedidoId` que ele nao criou
-nunca vira um pedido na lista do usuario.
+**12. Uma conexao pika por thread, e o publisher das rotas tem lock.** O
+`BlockingConnection` nao e thread-safe. O consumidor tem a sua conexao; as
+threads HTTP compartilham um `PublisherHTTP`, que serializa as publicacoes com
+um `threading.Lock` -- cobrindo tambem a reconexao interna, que nao e
+reentrante. O `acquire` tem prazo de 2s e vira HTTP 503: sem prazo, com o
+broker fora, a thread presa no connect congelaria a API inteira atras dela.
 
-**14. Idempotencia no `ms_estoque` e no `ms_entrega`**: `pedido.criado`
-repetido nao reserva duas vezes, `pagamento.aprovado` repetido nao emite duas
-notas. Necessario porque a entrega do RabbitMQ e at-least-once.
+**13. Chamada HTTP dentro do `handle()` bombeia a conexao.** O pika so
+processa heartbeats quando o codigo esta dentro da biblioteca. Um `httpx.post`
+direto no `handle()` seguraria a thread por segundos; o broker derrubaria a
+conexao por timeout, o `basic_ack` seguinte estouraria e -- como a mensagem
+nunca foi ackada -- ela voltaria por redelivery, **cobrando o cliente duas
+vezes**. Por isso `Microservice.aguardar()` roda a chamada num executor e fica
+em `process_data_events` ate ela terminar. So e seguro porque `prefetch_count=1`
+garante que nao ha outra mensagem em voo para reentrar no `handle()`.
 
-**15. As quantidades em estoque vivem APENAS no `ms_estoque`.**
-`common/catalogo.py` tem so os dados cadastrais do produto -- e uma tabela de
-referencia carregada localmente, como um arquivo de configuracao, nao uma
-chamada entre processos. Por isso o menu nao mostra saldo: nao ha como
-consultar sem chamada direta, que o enunciado proibe.
+**14. O SSE e `async def` com `asyncio.Queue`, nunca gerador sincrono.** Um
+gerador sincrono em `StreamingResponse` ocupa uma thread do pool do anyio (40
+no total, compartilhadas com TODAS as rotas `def`) durante toda a conexao
+aberta: 40 abas travariam a API inteira. Pior, um `queue.get()` bloqueado nao e
+cancelavel, entao cada aba fechada vazaria uma thread para sempre. A thread do
+pika entrega com `loop.call_soon_threadsafe`, e **o fan-out roda dentro do
+loop** -- por isso o registro de assinantes nao precisa de lock.
+Corolario: as rotas que **publicam** sao `def`, para irem ao threadpool. Uma
+rota `async def` publicando bloquearia o loop e congelaria todos os SSE juntos.
 
-**16. Consumidores de promocoes usam `publica=False`** e nao tem chave
-privada. Nao podem publicar nada nem falar com microsservico algum, so com o
-broker.
+**15. `confirm_delivery()` + `mandatory=True` no publisher das rotas.** Sem
+confirms, `basic_publish` e fire-and-forget: a exchange `eCommerce` e direct,
+e uma mensagem que nenhuma fila escuta e descartada pelo broker **sem erro
+nenhum**. O `POST /api/pedidos` devolveria 202 para um pedido que nunca
+existiria. Com confirms isso vira `UnroutableError` -> HTTP 503.
 
-**17. As routing keys da exchange `eCommerce` vivem em um `StrEnum`**
-(`common/eventos.py`). Antes cada nome aparecia como string literal solta em
-varios arquivos (`pedido.criado` 13 vezes, `pedido.estoque_ok` e
-`pagamento.aprovado` 8 cada). Um erro de digitacao ali e um bug silencioso: o
-evento sai numa chave que nenhuma fila escuta, ou um binding nunca casa, e nada
-estoura -- o pedido so para de andar. Como `StrEnum` herda de `str`, o membro
-serve direto como routing key do pika e como valor do campo `event`: a
-serializacao canonica produz os mesmos bytes e a assinatura nao muda (o hash do
-`tools.test_crypto` e o mesmo de antes da mudanca).
+**16. `connect()` levanta excecao em vez de `sys.exit()`.** Esse foi o ponto
+mais traicoeiro da migracao: `sys.exit` levanta `SystemExit`, e o modulo
+`threading` trata `SystemExit` como **fim normal** da thread. Numa thread
+secundaria, o processo nao morreria -- a thread do consumidor sumiria sem
+traceback e o servidor HTTP seguiria respondendo 200 sem processar evento
+algum. Hoje so os `if __name__ == "__main__"` traduzem a falha em `sys.exit`, e
+o `GET /health` expoe `consumidor_vivo` justamente porque essa falha e
+invisivel por definicao.
 
-As chaves de **promocao** ficam de fora do enum e sao escritas literalmente em
-`ms_promocoes`, `consumidor_c1` e `consumidor_c2`. A do produtor e montada em
-tempo de execucao (`f"promocao.categoria.{categoria}"`, com a categoria vinda
-do catalogo) e as dos consumidores sao padroes de binding, inclusive o curinga
-`promocao.categoria.*` do C2 -- nenhuma das tres e um valor fixo que caiba num
-enum fechado.
+**17. Shutdown via `add_callback_threadsafe`.** E a unica API do
+`BlockingConnection` chamavel de fora da thread dona. Alem disso: a thread do
+consumidor e **non-daemon** com `join`, e o teardown poe uma sentinela em todas
+as filas SSE -- um stream SSE nunca termina sozinho, e sem a sentinela o
+graceful shutdown do uvicorn esperaria por ele para sempre.
 
-**18. O `Status` carrega o rotulo exibido** em vez de existir um dicionario
-`STATUS` paralelo, que podia sair de sincronia com os status usados no codigo.
-O valor do membro continua sendo o nome interno, entao o
-`startswith("CANCELADO")` do menu segue funcionando.
+**18. Um processo por servico, sem `--reload` e sem `--workers > 1`.** Cada
+worker abriria o seu proprio consumidor na MESMA fila: o RabbitMQ distribuiria
+os eventos em round-robin e o cliente conectado ao worker 2 perderia o evento
+consumido pelo worker 1. O SSE quebraria de forma intermitente.
 
-**19. O despacho de eventos usa `match`** no `ms_principal` (5 casos) e no
-`ms_estoque`. Atencao ao escrever: `case Evento.PEDIDO_CRIADO` e padrao de
-VALOR porque o nome e pontilhado; um `case PEDIDO_CRIADO` solto seria padrao
-de CAPTURA e casaria com qualquer evento.
+**19. O webhook exige segredo compartilhado.** Sem isso, qualquer um que
+alcance a porta 8003 aprova qualquer pedido -- e o evento resultante sairia
+**assinado pelo `ms_pagamento`**, fazendo toda a cadeia de assinatura do
+trabalho atestar um dado forjado. A autenticidade do transporte interno nao
+vale nada se a borda que alimenta esse transporte estiver aberta.
+
+**20. SQLite em WAL, uma conexao por thread.** A thread do pika escreve
+enquanto as threads HTTP leem o `GET /produtos`. WAL permite um escritor e N
+leitores sem bloqueio. **Nao** usamos `check_same_thread=False`: isso faria as
+threads compartilharem o estado de transacao, e uma leitura HTTP enxergaria a
+transacao aberta pelo consumidor. A reserva de um pedido inteiro vai dentro de
+`BEGIN IMMEDIATE`, mantendo o "tudo ou nada" que o Trab1 tinha de graca por ser
+monothread.
+
+**21. Transicao de estado atomica no `PedidoStore`.** `atualizar_se()` confere
+o estado atual e grava sob o mesmo lock. Com varias threads HTTP, dois DELETE
+concorrentes leriam o mesmo estado valido e publicariam dois `pedido.excluido`.
+
+**22. Registrar o pedido ANTES de publicar.** O `pedido.estoque_ok` volta em
+milissegundos e o `handle()` descarta evento de `pedidoId` desconhecido.
+Publicar primeiro perderia o primeiro evento da cadeia. O instinto dentro de um
+endpoint e publicar primeiro -- dai o comentario no codigo.
+
+**23. O frontend abre o `EventSource` no mount**, antes de existir qualquer
+pedido. Abrindo depois do POST, os primeiros eventos (que chegam em
+milissegundos) se perderiam.
+
+**24. O botao "Pagar agora" existe porque `window.open` costuma ser
+bloqueado.** A abertura automatica da aba parte do callback do SSE, nao de um
+clique do usuario, e o navegador barra. O botao visivel no card do pedido e a
+garantia de que a demonstracao nunca trava.
+
+**25. O `ms_promocoes` consome a propria promocao que publica.** Uma fila, dois
+bindings, exchanges diferentes. Parece volta desnecessaria, mas separa geracao
+de notificacao e preserva o topic exchange com curinga `*`, que era o que os
+consumidores C1/C2 do Trab1 demonstravam. A fila tem `x-message-ttl` e
+`x-max-length`: sendo duravel, o gerador parado por horas acumularia promocoes
+velhas e viraria uma enxurrada de e-mails no restart.
+
+**26. O `mock_pagamento` nao importa nada de `common/`.** Sem chave privada,
+sem AMQP, sem envelope. E proposital: ele representa um sistema de terceiros,
+que so conhece o `ms_pagamento` por HTTP. Se ele compartilhasse o codigo de
+assinatura, a fronteira "externo" deixaria de significar alguma coisa.
+
+**27. As routing keys da exchange `eCommerce` vivem em um `StrEnum`**
+(`common/eventos.py`). Um erro de digitacao ali e um bug silencioso: o evento
+sai numa chave que nenhuma fila escuta e nada estoura -- o pedido so para de
+andar. Como `StrEnum` herda de `str`, o membro serve direto como routing key do
+pika e como valor do campo `event`. As chaves de **promocao** ficam de fora: a
+do produtor e montada em tempo de execucao
+(`f"promocao.categoria.{categoria}"`) e a do consumidor e um padrao de binding
+com curinga -- nenhuma das duas e um valor fixo que caiba num enum fechado.
+
+**28. O `Status` carrega o rotulo exibido**, em vez de um dicionario paralelo
+que podia sair de sincronia. O valor do membro continua sendo o nome interno,
+e o `startswith("CANCELADO")` segue funcionando.
+
+**29. O catalogo (`common/catalogo.py`) continua local, mas o SALDO agora e
+consultado.** No Trab1 o saldo era invisivel fora do `ms_estoque`, porque
+qualquer consulta exigiria chamada direta entre processos -- proibida. O Trab2
+autoriza explicitamente o gateway a consultar o `ms_estoque` via REST, entao a
+tela mostra o estoque real. O `catalogo.py` segue sendo so a tabela cadastral,
+carregada localmente como um arquivo de configuracao, e e a semente do banco.
+
+---
 
 ## Limitacoes conhecidas
 
-- **A exclusao pelo usuario nao e coordenada com o pagamento.** O menu recusa
+- **A exclusao pelo usuario nao e coordenada com o pagamento.** A tela recusa
   excluir um pedido ja `ENVIADO` ou ja cancelado, mas aceita excluir um pedido
   com pagamento aprovado: o `pedido.excluido` devolve a reserva no estoque e
   nao existe evento de estorno, entao o pedido fica "cancelado, mas pago".
 - **Eventos que chegam depois do cancelamento sobrescrevem o status.** Se o
-  usuario excluir e um `pagamento.aprovado` ou `pedido.enviado` ja estiver a
-  caminho, o status exibido deixa de ser "CANCELADO".
-- O estado dos tres servicos com memoria (`ms_principal`, `ms_estoque`,
-  `ms_entrega`) vive em RAM: reiniciar o processo zera pedidos, reservas e
-  notas emitidas.
+  usuario excluir e um `pagamento.aprovado` ja estiver a caminho, o status
+  exibido deixa de ser "CANCELADO".
+- **O `PedidoStore` do gateway vive em RAM**: reiniciar o gateway zera a lista
+  de pedidos (o enunciado so exige persistencia no `ms_estoque`). O estoque e
+  as reservas, esses, sobrevivem.
+- **O `ms_entrega` guarda as notas emitidas em RAM**: reiniciar permite emitir
+  nota duplicada para um `pagamento.aprovado` reentregue.
+- **O publisher das rotas e um so, com lock.** Sob carga real, o caminho mais
+  robusto seria uma thread publicadora dedicada com fila e `Future` por
+  publicacao -- elimina o lock e permite voltar a usar heartbeat. Para a escala
+  deste trabalho, o lock com prazo resolve e e muito mais simples de defender.
 
 ## Observacoes
 
 - As chaves **privadas** (`*.key.pem`, permissao 0600) estao no `.gitignore`.
   As **publicas** (`*.pub.pem`) sao versionadas, como pede a especificacao.
-- Ao rodar o menu, os eventos chegam em outra thread e imprimem no console.
-  Se a tela embolar durante uma digitacao, ENTER redesenha o menu.
+- O `.env` esta no `.gitignore`; o `.env.example` e versionado, sem valores.
+- O banco `ms_estoque/estoque.db` e o `ms_promocoes/interesses.json` sao
+  estado local e tambem ficam fora do git.
 - Requer **Python 3.12 ou superior**: `StrEnum` (3.11), `match` (3.10),
-  `typing.override` e `typing.Self` (3.12/3.11). Testado com Python 3.14.7 e
-  3.13.15, pika 1.3.2, cryptography 43.0.3, RabbitMQ 3.13. O
-  `cryptography 43.0.3` instala no 3.14 pelo wheel `cp39-abi3`, sem compilar.
+  `typing.override` e `typing.Self` (3.12/3.11). Testado com Python 3.13.15,
+  pika 1.3.2, cryptography 43.0.3, FastAPI 0.115, RabbitMQ 3.13 e Node 24.
 - O `@override` nos `handle()` so e verificado por type checker estatico, nao
-  em tempo de execucao. Para que ele pegue um `handle` escrito errado:
-
-  ```bash
-  MYPYPATH=. mypy --explicit-package-bases --ignore-missing-imports \
-      common tools ms_principal ms_estoque ms_pagamento ms_entrega \
-      ms_promocoes consumidor_c1 consumidor_c2
-  ```
-
-  O `--explicit-package-bases` e necessario porque os servicos tem arquivos
-  `main.py` homonimos e o projeto nao usa `__init__.py`.
+  em tempo de execucao.

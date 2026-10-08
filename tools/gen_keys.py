@@ -14,7 +14,6 @@ MICROSSERVICOS = [
     "ms_entrega",
     "ms_promocoes",
 ]
-CONSUMIDORES = ["consumidor_c1", "consumidor_c2"]
 
 
 def main() -> None:
@@ -45,13 +44,9 @@ def main() -> None:
 
         print(f"  {dono:<14} -> 1 privada + {len(pares)} publicas")
 
-    for consumidor in CONSUMIDORES:
-        pasta = ROOT / consumidor / "keys"
-        pasta.mkdir(parents=True, exist_ok=True)
-        (pasta / "ms_promocoes.pub.pem").write_bytes(public_to_pem(pares["ms_promocoes"]))
-        print(f"  {consumidor:<14} -> ms_promocoes.pub.pem")
-
     print("\nPronto. Chaves privadas com permissao 0600 e fora do git.")
+    print("O mock_pagamento nao entra aqui: ele e um sistema EXTERNO, fala por")
+    print("HTTP e nunca publica no broker, entao nao tem (nem precisa de) chave.")
 
 
 if __name__ == "__main__":

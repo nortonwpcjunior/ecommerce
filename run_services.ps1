@@ -1,8 +1,8 @@
 # Versao Windows do run_services.sh (PowerShell).
-# Sobe os 6 processos nao-interativos em background, com log em logs\.
-# O ms_principal fica de fora: rode-o em primeiro plano, e ele e a interface.
+# Sobe os 6 processos do backend em background, com log em logs\.
+# O frontend (npm run dev) fica de fora: rode-o num terminal proprio.
 #
-#   .\run_services.ps1 start    # sobe estoque, pagamento, entrega, promocoes, C1, C2
+#   .\run_services.ps1 start    # estoque, mock, pagamento, entrega, promocoes, gateway
 #   .\run_services.ps1 stop     # derruba todos
 #   .\run_services.ps1 logs     # acompanha os logs (Ctrl+C para sair)
 #
@@ -12,7 +12,7 @@
 # A venv nao precisa estar dentro do projeto. Para apontar para outra:
 #   .\run_services.ps1 start -Python C:\caminho\da\venv\Scripts\python.exe
 #
-# Para a defesa, prefira 7 terminais separados (ver README).
+# Para a defesa, prefira um terminal por processo (ver README).
 
 param([string]$Comando = "start", [string]$Python = "")
 
@@ -20,8 +20,7 @@ $ErrorActionPreference = "Stop"
 
 $Raiz     = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PastaLog = Join-Path $Raiz "logs"
-$Servicos = @("ms_estoque", "ms_pagamento", "ms_entrega", "ms_promocoes",
-              "consumidor_c1", "consumidor_c2")
+$Servicos = @("ms_estoque", "mock_pagamento", "ms_pagamento", "ms_entrega", "ms_promocoes", "ms_principal")
 
 
 # Acha o interpretador, em ordem de preferencia. A venv nem sempre fica dentro
@@ -93,7 +92,7 @@ function Start-Servicos {
 
     # Sem isso, um interpretador errado sobe os 6 processos, todos morrem no
     # import e o erro fica escondido nas janelas ocultas.
-    if ((Invoke-Python $Py @("-c", "import pika, cryptography")) -ne 0) {
+    if ((Invoke-Python $Py @("-c", "import pika, cryptography, fastapi, uvicorn, httpx")) -ne 0) {
         Write-Host "[ERRO] O interpretador encontrado nao tem as dependencias:"
         Write-Host "       $Py"
         Write-Host "       Instale com:  `"$Py`" -m pip install -r requirements.txt"
@@ -129,7 +128,8 @@ function Start-Servicos {
     }
 
     Write-Host ""
-    Write-Host "Agora rode a interface:  `"$Py`" -m ms_principal.main"
+    Write-Host "API Gateway:  http://localhost:8000/docs"
+    Write-Host "Agora rode o frontend:  cd frontend; npm run dev"
 }
 
 

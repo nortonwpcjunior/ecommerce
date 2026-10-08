@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
-# Sobe os 6 processos nao-interativos em background, com log em logs/.
-# O ms_principal fica de fora: rode-o em primeiro plano, e ele e a interface.
+# Sobe os 6 processos do backend em background, com log em logs/.
+# O frontend (npm run dev) fica de fora: rode-o num terminal proprio.
 #
-#   ./run_services.sh start    # sobe estoque, pagamento, entrega, promocoes, C1, C2
+#   ./run_services.sh start    # sobe estoque, pagamento, entrega, promocoes,
+#                              # mock e o API gateway
 #   ./run_services.sh stop     # derruba todos
 #   ./run_services.sh logs     # acompanha os logs
 #
-# Para a defesa, prefira 7 terminais separados (ver README).
+# Para a defesa, prefira um terminal por processo (ver README).
 
 set -euo pipefail
 cd "$(dirname "$0")"
 
 PY=.venv/bin/python
-SERVICOS=(ms_estoque ms_pagamento ms_entrega ms_promocoes consumidor_c1 consumidor_c2)
+
+# A ordem importa na subida: o gateway consulta o estoque, e o pagamento
+# precisa do mock de pe para abrir a cobranca.
+SERVICOS=(ms_estoque mock_pagamento ms_pagamento ms_entrega ms_promocoes ms_principal)
 
 start() {
   mkdir -p logs
@@ -26,7 +30,8 @@ start() {
     echo "  $s iniciado (pid $!) -> logs/$s.log"
   done
   echo
-  echo "Agora rode a interface:  $PY -m ms_principal.main"
+  echo "API Gateway:  http://localhost:8000/docs"
+  echo "Agora rode o frontend:  cd frontend && npm run dev"
 }
 
 stop() {

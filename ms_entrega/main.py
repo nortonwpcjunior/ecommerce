@@ -7,7 +7,7 @@ from typing import override
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.eventos import Evento  # noqa: E402
-from common.service import EX_ECOMMERCE, Microservice  # noqa: E402
+from common.service import EX_ECOMMERCE, Microservice, encerrar_na_falha  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -54,4 +54,4 @@ class MsEntrega(Microservice):
 
 
 if __name__ == "__main__":
-    MsEntrega().start()
+    encerrar_na_falha(lambda: MsEntrega().start())
