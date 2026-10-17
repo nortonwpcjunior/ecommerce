@@ -9,12 +9,10 @@ streams SSE de uma vez. A unica `async def` aqui e a do SSE.
 import asyncio
 import logging
 import os
-
 import httpx
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
-
 from common.catalogo import PRODUTOS
 from common.eventos import Evento
 from common.http import (
@@ -24,7 +22,6 @@ from common.http import (
     registrar_health,
 )
 from common.service import EX_ECOMMERCE, BrokerOcupado, PublisherHTTP
-
 from ms_principal.consumidor import NOME, MsPrincipal
 from ms_principal.sse import BARRAMENTO, stream
 from ms_principal.store import EXCLUIVEIS, STORE, Status
@@ -55,13 +52,13 @@ class Interesse(BaseModel):
     categorias: list[str] = Field(default_factory=list)
 
 
-def _ao_subir(app, servico):
+def _ao_subir(app):
     # O loop so existe aqui dentro; a thread do pika vai usa-lo para o fan-out.
     BARRAMENTO.ligar(asyncio.get_running_loop())
     app.state.publisher = PublisherHTTP(NOME)
 
 
-def _ao_descer(app, servico):
+def _ao_descer(app):
     BARRAMENTO.encerrar_todos()
     app.state.publisher.close()
 

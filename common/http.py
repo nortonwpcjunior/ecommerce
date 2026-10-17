@@ -62,12 +62,12 @@ def com_consumidor(fabrica: Callable[[], Microservice], ao_subir=None, ao_descer
         app.state.consumidor = thread
 
         if ao_subir is not None:
-            ao_subir(app, servico)
+            ao_subir(app)
         try:
             yield
         finally:
             if ao_descer is not None:
-                ao_descer(app, servico)
+                ao_descer(app)
             servico.parar()
             thread.join(timeout=5)
             cliente.close()
