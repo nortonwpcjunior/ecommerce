@@ -48,6 +48,28 @@ function Resolve-Python {
 }
 
 
+# Carrega o .env da raiz no ambiente deste processo; os servicos abertos pelo
+# Start-Process herdam. Variavel ja definida no terminal tem precedencia, e
+# aspas em volta do valor sao removidas (RESEND_FROM="Nome <email>").
+function Import-DotEnv {
+    $arquivo = Join-Path $Raiz ".env"
+    if (-not (Test-Path $arquivo)) { return }
+
+    foreach ($linha in Get-Content $arquivo) {
+        if ($linha -match '^\s*(#|$)' -or $linha -notmatch '=') { continue }
+        $nome, $valor = $linha -split '=', 2
+        $nome  = $nome.Trim()
+        $valor = $valor.Trim()
+        if ($valor -match '^"(.*)"$' -or $valor -match "^'(.*)'$") { $valor = $Matches[1] }
+
+        if (-not [Environment]::GetEnvironmentVariable($nome, "Process")) {
+            [Environment]::SetEnvironmentVariable($nome, $valor, "Process")
+        }
+    }
+    Write-Host "Variaveis carregadas de .env"
+}
+
+
 # Roda um comando externo sem deixar o $ErrorActionPreference='Stop' converter
 # a saida de stderr em excecao. Devolve o codigo de saida.
 function Invoke-Python([string]$exe, [string[]]$argumentos) {
@@ -101,6 +123,7 @@ function Start-Servicos {
     }
 
     Write-Host "Python: $Py"
+    Import-DotEnv
     Write-Host ""
 
     New-Item -ItemType Directory -Force -Path $PastaLog | Out-Null
