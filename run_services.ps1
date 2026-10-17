@@ -153,6 +153,10 @@ function Stop-Servicos {
 # Equivalente ao 'tail -f logs/*.log': le so o que foi acrescentado desde a
 # ultima passagem e prefixa cada linha com o nome do servico. Abre o arquivo
 # com FileShare.ReadWrite para nao travar o processo que esta escrevendo.
+#
+# O tamanho vem do stream aberto, nao do Get-ChildItem: no NTFS o tamanho da
+# entrada de diretorio so e atualizado quando o escritor fecha o arquivo, entao
+# com o servico rodando o Length listado fica parado em 0.
 function Show-Logs {
     if (-not (Test-Path $PastaLog)) {
         Write-Host "Nada em logs\ ainda. Rode:  .\run_services.ps1 start"
@@ -167,11 +171,12 @@ function Show-Logs {
         foreach ($arquivo in Get-ChildItem -Path $PastaLog -Filter *.log | Sort-Object Name) {
             $inicio = 0
             if ($posicoes.ContainsKey($arquivo.Name)) { $inicio = $posicoes[$arquivo.Name] }
-            if ($arquivo.Length -lt $inicio) { $inicio = 0 }   # arquivo recriado
-            if ($arquivo.Length -le $inicio) { continue }
 
             $fluxo = [System.IO.File]::Open($arquivo.FullName, "Open", "Read", "ReadWrite")
             try {
+                if ($fluxo.Length -lt $inicio) { $inicio = 0 }   # arquivo recriado
+                if ($fluxo.Length -le $inicio) { continue }      # o finally fecha o fluxo
+
                 $null = $fluxo.Seek($inicio, "Begin")
                 $leitor = New-Object System.IO.StreamReader($fluxo)
                 $texto  = $leitor.ReadToEnd()
