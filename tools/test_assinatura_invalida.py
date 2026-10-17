@@ -25,12 +25,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pika  # noqa: E402
 
 from common.crypto import Signer, load_private  # noqa: E402
+from common.eventos import Evento  # noqa: E402
 from common.envelope import Envelope  # noqa: E402
 from common.service import EX_ECOMMERCE, connect, declare_topology, keys_dir  # noqa: E402
 
 
 def signer(nome):
-    return Signer(load_private(keys_dir(nome) / ("%s.key.pem" % nome)))
+    return Signer(load_private(keys_dir(nome) / f"{nome}.key.pem"))
 
 
 def assinado(nome, event, payload):
@@ -49,9 +50,9 @@ def main():
 
     def enviar(rotulo, envelope, routing_key=None):
         routing_key = routing_key or envelope.event
-        print("\n[%s]" % rotulo)
-        print("   routing key: %s | pedido: %s"
-              % (routing_key, envelope.payload.get("pedidoId")))
+        print(f"\n[{rotulo}]")
+        print(f"   routing key: {routing_key} | "
+              f"pedido: {envelope.payload.get('pedidoId')}")
         canal.basic_publish(EX_ECOMMERCE, routing_key, envelope.to_bytes(),
                             properties=pika.BasicProperties(delivery_mode=2))
         time.sleep(2)
@@ -60,19 +61,19 @@ def main():
 
     # 1. legitimo
     enviar("1/4 legitimo -> deve ser PROCESSADO",
-           assinado("ms_principal", "pedido.criado",
+           assinado("ms_principal", Evento.PEDIDO_CRIADO,
                     {"pedidoId": "TESTE-VALIDO", "cliente": "teste",
                      "itens": [item], "total": 1250.0}))
 
     # 2. payload trocado depois de assinar
-    env = assinado("ms_principal", "pedido.criado",
+    env = assinado("ms_principal", Evento.PEDIDO_CRIADO,
                    {"pedidoId": "TESTE-ADULTERADO", "cliente": "teste",
                     "itens": [item], "total": 1250.0})
     env.payload["itens"] = [{"produtoId": "P5", "quantidade": 99}]
     enviar("2/4 payload adulterado -> deve ser DESCARTADO", env)
 
     # 3. assinado pelo ms_entrega, alegando ser o ms_principal
-    env = assinado("ms_entrega", "pedido.criado",
+    env = assinado("ms_entrega", Evento.PEDIDO_CRIADO,
                    {"pedidoId": "TESTE-CHAVE-ERRADA", "cliente": "teste",
                     "itens": [item], "total": 1250.0})
     env.producer = "ms_principal"
@@ -80,11 +81,11 @@ def main():
 
     # 4. substituicao de evento: payload assinado para pedido.estoque_ok
     #    republicado como pagamento.aprovado
-    env = assinado("ms_estoque", "pedido.estoque_ok",
+    env = assinado("ms_estoque", Evento.PEDIDO_ESTOQUE_OK,
                    {"pedidoId": "TESTE-SUBSTITUICAO", "itens": [item], "total": 1250.0})
-    env.event = "pagamento.aprovado"
+    env.event = Evento.PAGAMENTO_APROVADO
     enviar("4/4 evento substituido -> deve ser DESCARTADO", env,
-           routing_key="pagamento.aprovado")
+           routing_key=Evento.PAGAMENTO_APROVADO)
 
     conexao.close()
     print("\nConfira os logs: apenas TESTE-VALIDO deve ter sido reservado,")

@@ -1,15 +1,3 @@
-"""Gera os pares de chaves RSA-2048 e distribui as chaves publicas.
-
-Cada microsservico recebe, na sua pasta keys/:
-  - <nome>.key.pem       sua chave PRIVADA (nunca versionada, ver .gitignore)
-  - <outro>.pub.pem      a chave PUBLICA de todos os microsservicos
-
-Os consumidores de promocoes (C1 e C2) nao publicam nada, portanto recebem
-apenas a chave publica do ms_promocoes.
-
-Uso:  python -m tools.gen_keys [--force]
-"""
-
 import sys
 from pathlib import Path
 
@@ -26,7 +14,6 @@ MICROSSERVICOS = [
     "ms_entrega",
     "ms_promocoes",
 ]
-CONSUMIDORES = ["consumidor_c1", "consumidor_c2"]
 
 
 def main() -> None:
@@ -34,36 +21,32 @@ def main() -> None:
 
     existentes = [
         s for s in MICROSSERVICOS
-        if (ROOT / s / "keys" / ("%s.key.pem" % s)).exists()
+        if (ROOT / s / "keys" / f"{s}.key.pem").exists()
     ]
     if existentes and not force:
-        print("Chaves privadas ja existem para: %s" % ", ".join(existentes))
+        print(f"Chaves privadas ja existem para: {', '.join(existentes)}")
         print("Use --force para gerar novamente (invalida as chaves atuais).")
         return
 
-    print("Gerando %d pares RSA-2048...\n" % len(MICROSSERVICOS))
+    print(f"Gerando {len(MICROSSERVICOS)} pares RSA-2048...\n")
     pares = {nome: generate_keypair() for nome in MICROSSERVICOS}
 
     for dono in MICROSSERVICOS:
         pasta = ROOT / dono / "keys"
         pasta.mkdir(parents=True, exist_ok=True)
 
-        priv = pasta / ("%s.key.pem" % dono)
+        priv = pasta / f"{dono}.key.pem"
         priv.write_bytes(private_to_pem(pares[dono]))
         priv.chmod(0o600)
 
         for servico, chave in pares.items():
-            (pasta / ("%s.pub.pem" % servico)).write_bytes(public_to_pem(chave))
+            (pasta / f"{servico}.pub.pem").write_bytes(public_to_pem(chave))
 
-        print("  %-14s -> 1 privada + %d publicas" % (dono, len(pares)))
-
-    for consumidor in CONSUMIDORES:
-        pasta = ROOT / consumidor / "keys"
-        pasta.mkdir(parents=True, exist_ok=True)
-        (pasta / "ms_promocoes.pub.pem").write_bytes(public_to_pem(pares["ms_promocoes"]))
-        print("  %-14s -> ms_promocoes.pub.pem" % consumidor)
+        print(f"  {dono:<14} -> 1 privada + {len(pares)} publicas")
 
     print("\nPronto. Chaves privadas com permissao 0600 e fora do git.")
+    print("O mock_pagamento nao entra aqui: ele e um sistema EXTERNO, fala por")
+    print("HTTP e nunca publica no broker, entao nao tem (nem precisa de) chave.")
 
 
 if __name__ == "__main__":

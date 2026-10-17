@@ -1,8 +1,8 @@
 # Versao Windows do run_services.sh (PowerShell).
-# Sobe os 6 processos nao-interativos em background, com log em logs\.
-# O ms_principal fica de fora: rode-o em primeiro plano, e ele e a interface.
+# Sobe os 6 processos do backend em background, com log em logs\.
+# O frontend (npm run dev) fica de fora: rode-o num terminal proprio.
 #
-#   .\run_services.ps1 start    # sobe estoque, pagamento, entrega, promocoes, C1, C2
+#   .\run_services.ps1 start    # estoque, mock, pagamento, entrega, promocoes, gateway
 #   .\run_services.ps1 stop     # derruba todos
 #   .\run_services.ps1 logs     # acompanha os logs (Ctrl+C para sair)
 #
@@ -12,7 +12,7 @@
 # A venv nao precisa estar dentro do projeto. Para apontar para outra:
 #   .\run_services.ps1 start -Python C:\caminho\da\venv\Scripts\python.exe
 #
-# Para a defesa, prefira 7 terminais separados (ver README).
+# Para a defesa, prefira um terminal por processo (ver README).
 
 param([string]$Comando = "start", [string]$Python = "")
 
@@ -20,8 +20,7 @@ $ErrorActionPreference = "Stop"
 
 $Raiz     = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PastaLog = Join-Path $Raiz "logs"
-$Servicos = @("ms_estoque", "ms_pagamento", "ms_entrega", "ms_promocoes",
-              "consumidor_c1", "consumidor_c2")
+$Servicos = @("ms_estoque", "mock_pagamento", "ms_pagamento", "ms_entrega", "ms_promocoes", "ms_principal")
 
 
 # Acha o interpretador, em ordem de preferencia. A venv nem sempre fica dentro
@@ -46,6 +45,28 @@ function Resolve-Python {
     if ($noPath) { return $noPath.Source }
 
     return $null
+}
+
+
+# Carrega o .env da raiz no ambiente deste processo; os servicos abertos pelo
+# Start-Process herdam. Variavel ja definida no terminal tem precedencia, e
+# aspas em volta do valor sao removidas (RESEND_FROM="Nome <email>").
+function Import-DotEnv {
+    $arquivo = Join-Path $Raiz ".env"
+    if (-not (Test-Path $arquivo)) { return }
+
+    foreach ($linha in Get-Content $arquivo) {
+        if ($linha -match '^\s*(#|$)' -or $linha -notmatch '=') { continue }
+        $nome, $valor = $linha -split '=', 2
+        $nome  = $nome.Trim()
+        $valor = $valor.Trim()
+        if ($valor -match '^"(.*)"$' -or $valor -match "^'(.*)'$") { $valor = $Matches[1] }
+
+        if (-not [Environment]::GetEnvironmentVariable($nome, "Process")) {
+            [Environment]::SetEnvironmentVariable($nome, $valor, "Process")
+        }
+    }
+    Write-Host "Variaveis carregadas de .env"
 }
 
 
@@ -93,7 +114,7 @@ function Start-Servicos {
 
     # Sem isso, um interpretador errado sobe os 6 processos, todos morrem no
     # import e o erro fica escondido nas janelas ocultas.
-    if ((Invoke-Python $Py @("-c", "import pika, cryptography")) -ne 0) {
+    if ((Invoke-Python $Py @("-c", "import pika, cryptography, fastapi, uvicorn, httpx")) -ne 0) {
         Write-Host "[ERRO] O interpretador encontrado nao tem as dependencias:"
         Write-Host "       $Py"
         Write-Host "       Instale com:  `"$Py`" -m pip install -r requirements.txt"
@@ -102,6 +123,7 @@ function Start-Servicos {
     }
 
     Write-Host "Python: $Py"
+    Import-DotEnv
     Write-Host ""
 
     New-Item -ItemType Directory -Force -Path $PastaLog | Out-Null
@@ -129,7 +151,8 @@ function Start-Servicos {
     }
 
     Write-Host ""
-    Write-Host "Agora rode a interface:  `"$Py`" -m ms_principal.main"
+    Write-Host "API Gateway:  http://localhost:8000/docs"
+    Write-Host "Agora rode o frontend:  cd frontend; npm run dev"
 }
 
 
@@ -153,6 +176,10 @@ function Stop-Servicos {
 # Equivalente ao 'tail -f logs/*.log': le so o que foi acrescentado desde a
 # ultima passagem e prefixa cada linha com o nome do servico. Abre o arquivo
 # com FileShare.ReadWrite para nao travar o processo que esta escrevendo.
+#
+# O tamanho vem do stream aberto, nao do Get-ChildItem: no NTFS o tamanho da
+# entrada de diretorio so e atualizado quando o escritor fecha o arquivo, entao
+# com o servico rodando o Length listado fica parado em 0.
 function Show-Logs {
     if (-not (Test-Path $PastaLog)) {
         Write-Host "Nada em logs\ ainda. Rode:  .\run_services.ps1 start"
@@ -167,11 +194,12 @@ function Show-Logs {
         foreach ($arquivo in Get-ChildItem -Path $PastaLog -Filter *.log | Sort-Object Name) {
             $inicio = 0
             if ($posicoes.ContainsKey($arquivo.Name)) { $inicio = $posicoes[$arquivo.Name] }
-            if ($arquivo.Length -lt $inicio) { $inicio = 0 }   # arquivo recriado
-            if ($arquivo.Length -le $inicio) { continue }
 
             $fluxo = [System.IO.File]::Open($arquivo.FullName, "Open", "Read", "ReadWrite")
             try {
+                if ($fluxo.Length -lt $inicio) { $inicio = 0 }   # arquivo recriado
+                if ($fluxo.Length -le $inicio) { continue }      # o finally fecha o fluxo
+
                 $null = $fluxo.Seek($inicio, "Begin")
                 $leitor = New-Object System.IO.StreamReader($fluxo)
                 $texto  = $leitor.ReadToEnd()

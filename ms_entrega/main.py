@@ -1,32 +1,22 @@
-#!/usr/bin/env python3
-"""Microsservico Entrega.
-
-    Consome:  pagamento.aprovado
-    Publica:  pedido.enviado
-
-Emite a nota fiscal (simulada) e prepara a entrega antes de publicar.
-"""
-
 import logging
 import random
 import sys
-import time
 from pathlib import Path
+from typing import override
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from common.service import EX_ECOMMERCE, Microservice  # noqa: E402
+from common.eventos import Evento  # noqa: E402
+from common.service import EX_ECOMMERCE, Microservice, encerrar_na_falha  # noqa: E402
 
 log = logging.getLogger(__name__)
-
-TRANSPORTADORAS = ["Correios", "Jadlog", "Loggi", "Azul Cargo"]
 
 
 class MsEntrega(Microservice):
     name = "ms_entrega"
     queue = "fila.entrega"
     bindings = [
-        (EX_ECOMMERCE, "pagamento.aprovado"),
+        (EX_ECOMMERCE, Evento.PAGAMENTO_APROVADO),
     ]
 
     def __init__(self):
@@ -34,28 +24,28 @@ class MsEntrega(Microservice):
         self._proxima_nota = 1000
         self._emitidas = set()
 
+    @override
     def handle(self, event, payload):
-        if event != "pagamento.aprovado":
+        if event != Evento.PAGAMENTO_APROVADO:
             return
 
         pedido_id = payload["pedidoId"]
 
-        # Idempotencia: nao emitir duas notas para o mesmo pedido.
+        # Idempotencia
         if pedido_id in self._emitidas:
-            log.info("nota de %s ja emitida -- ignorando duplicata", pedido_id)
+            log.info(f"nota de {pedido_id} ja emitida")
             return
 
         self._proxima_nota += 1
-        nota = "NF-%d" % self._proxima_nota
-        log.info("emitindo nota fiscal %s para %s...", nota, pedido_id)
-        time.sleep(1)  # simula emissao da nota e preparacao do pacote
+        nota = f"NF-{self._proxima_nota}"
+        log.info(f"emitindo nota fiscal {nota} para {pedido_id}...")
 
-        rastreio = "BR%09d" % random.randint(0, 999999999)
-        transportadora = random.choice(TRANSPORTADORAS)
+        rastreio = f"BR{random.randint(0, 999999999):09d}"
+        transportadora = random.choice(["Correios", "Jadlog", "Loggi", "Azul Cargo"])
         self._emitidas.add(pedido_id)
-        log.info("despachado via %s (rastreio %s)", transportadora, rastreio)
+        log.info(f"despachado via {transportadora} (rastreio {rastreio})")
 
-        self.publish(EX_ECOMMERCE, "pedido.enviado", {
+        self.publish(EX_ECOMMERCE, Evento.PEDIDO_ENVIADO, {
             "pedidoId": pedido_id,
             "notaFiscal": nota,
             "rastreio": rastreio,
@@ -64,4 +54,4 @@ class MsEntrega(Microservice):
 
 
 if __name__ == "__main__":
-    MsEntrega().start()
+    encerrar_na_falha(lambda: MsEntrega().start())
