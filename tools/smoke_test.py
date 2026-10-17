@@ -48,7 +48,7 @@ def main() -> int:
 
     with httpx.Client(timeout=10.0) as cliente:
         try:
-            cliente.get(f"{GATEWAY}/health")
+            cliente.get(f"{GATEWAY}/api/categorias")
         except httpx.HTTPError:
             sys.exit("API Gateway fora do ar. Rode ./run_services.sh start")
 

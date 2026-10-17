@@ -96,8 +96,8 @@ PAGINA = """<!doctype html>
   <h1>Mock de Pagamento</h1>
   <div class="valor">R$ {valor}</div>
   <div class="pedido">Pedido {pedido}</div>
-  <button class="ok"  onclick="decidir('APROVADO')">Pagamento Aprovado</button>
-  <button class="nao" onclick="decidir('RECUSADO')">Pagamento Recusado</button>
+  <button class="ok"  onclick="decidir('APROVADO')">Aprovar Pagamento</button>
+  <button class="nao" onclick="decidir('RECUSADO')">Recusar Pagamento</button>
   <p id="aviso"></p>
 </div>
 <script>
@@ -146,7 +146,7 @@ def decidir(cobranca_id: str, status: str):
             return {"mensagem": f"Esta cobranca ja foi {cobranca['decisao']}."}
         cobranca["decisao"] = status
 
-    corpo = {
+    body = {
         "cobrancaId": cobranca_id,
         "pedidoId": cobranca["pedidoId"],
         "status": status,
@@ -157,7 +157,7 @@ def decidir(cobranca_id: str, status: str):
     try:
         resposta = httpx.post(
             cobranca["webhookUrl"],
-            json=corpo,
+            json=body,
             headers={"X-Webhook-Secret": SEGREDO},
             timeout=5.0,
         )
@@ -169,11 +169,6 @@ def decidir(cobranca_id: str, status: str):
         raise HTTPException(502, f"nao foi possivel avisar a loja: {exc}") from exc
 
     return {"mensagem": f"Pagamento {status.lower()}. Pode fechar esta aba."}
-
-
-@app.get("/health")
-def health():
-    return {"ok": True, "cobrancas": len(_cobrancas)}
 
 
 if __name__ == "__main__":

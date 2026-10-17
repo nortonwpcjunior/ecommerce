@@ -59,7 +59,6 @@ def com_consumidor(fabrica: Callable[[], Microservice], ao_subir=None, ao_descer
         # non-daemon: o teardown faz join, nao queremos matar no meio de um ack.
         thread = threading.Thread(target=servico.start, name="consumidor")
         thread.start()
-        app.state.consumidor = thread
 
         if ao_subir is not None:
             ao_subir(app)
@@ -73,23 +72,6 @@ def com_consumidor(fabrica: Callable[[], Microservice], ao_subir=None, ao_descer
             cliente.close()
 
     return lifespan
-
-
-def registrar_health(app: FastAPI) -> None:
-    """/health expoe se a thread do consumidor continua viva.
-
-    Sem isso, o consumidor pode morrer e o processo seguir respondendo 200 em
-    todas as rotas enquanto nenhum evento e processado -- uma falha que nao
-    aparece em lugar nenhum.
-    """
-
-    @app.get("/health")
-    def health():
-        thread = getattr(app.state, "consumidor", None)
-        return {
-            "ok": thread is not None and thread.is_alive(),
-            "consumidor_vivo": thread is not None and thread.is_alive(),
-        }
 
 
 def rodar(app: FastAPI, porta: int, nome: str) -> None:

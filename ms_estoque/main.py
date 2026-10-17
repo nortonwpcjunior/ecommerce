@@ -12,7 +12,7 @@ from typing import override
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from common.eventos import Evento  # noqa: E402
-from common.http import com_consumidor, criar_app, registrar_health, rodar  # noqa: E402
+from common.http import com_consumidor, criar_app, rodar  # noqa: E402
 from common.service import EX_ECOMMERCE, Microservice  # noqa: E402
 
 from ms_estoque import estoque  # noqa: E402
@@ -94,7 +94,6 @@ class MsEstoque(Microservice):
 
 
 app = criar_app("MS Estoque", lifespan=com_consumidor(MsEstoque))
-registrar_health(app)
 
 
 @app.get("/produtos")

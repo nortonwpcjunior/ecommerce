@@ -26,7 +26,6 @@ from common.http import (  # noqa: E402
     cliente,
     com_consumidor,
     criar_app,
-    registrar_health,
     rodar,
 )
 from common.service import EX_ECOMMERCE, Microservice, PublisherHTTP  # noqa: E402
@@ -36,7 +35,7 @@ PORTA = int(os.getenv("PAGAMENTO_PORTA", "8003"))
 
 MOCK_URL = os.getenv("MOCK_URL", "http://localhost:8004")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", f"http://localhost:{PORTA}/webhook/pagamento")
-SEGREDO = os.getenv("MOCK_WEBHOOK_SECRET", "segredo-de-demonstracao")
+SECRET = os.getenv("MOCK_WEBHOOK_SECRET", "segredo-de-demonstracao")
 
 log = logging.getLogger(NOME)
 
@@ -162,7 +161,6 @@ app = criar_app(
     "MS Pagamento",
     lifespan=com_consumidor(MsPagamento, _abrir_publisher, _fechar_publisher),
 )
-registrar_health(app)
 
 
 @app.post("/webhook/pagamento")
@@ -175,9 +173,9 @@ def webhook(decisao: Decisao, x_webhook_secret: str = Header(default="")):
     # Sem este confere, qualquer um que alcance a porta aprova qualquer pedido
     # -- e o evento sairia assinado por este servico, fazendo a cadeia de
     # assinatura atestar um dado forjado.
-    if x_webhook_secret != SEGREDO:
-        log.warning(f"webhook com segredo invalido para {decisao.pedidoId}")
-        raise HTTPException(401, "segredo invalido")
+    if x_webhook_secret != SECRET:
+        log.warning(f"webhook secret invalido para {decisao.pedidoId}")
+        raise HTTPException(401, "webhook secret invalido")
 
     status = decisao.status.upper()
     if status not in ("APROVADO", "RECUSADO"):

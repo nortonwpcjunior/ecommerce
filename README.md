@@ -73,7 +73,6 @@ Documentacao interativa (gerada pelo FastAPI): <http://localhost:8000/docs>.
 | `DELETE` | `/api/interesses?email=` | publica `interesse.promocao` com `acao=cancelar` |
 | `GET` | `/api/categorias` | categorias disponiveis |
 | `GET` | `/api/eventos/{clienteId}` | **SSE**: toda mudanca de estado dos pedidos do cliente |
-| `GET` | `/health` | diz se a thread do consumidor continua viva |
 
 Nos demais processos: `GET /produtos` (estoque), `POST /webhook/pagamento`
 (pagamento), `POST /cobrancas` + `GET /checkout/{id}` (mock).
@@ -388,14 +387,9 @@ forjar um evento?". Exige `ms_estoque` e `ms_entrega` no ar.
 Checagens rapidas de saude:
 
 ```bash
-curl localhost:8000/health      # consumidor_vivo: a thread do pika ainda roda?
 curl localhost:8002/produtos    # saldo persistido
 curl -N localhost:8000/api/eventos/cli-demo   # acompanha o SSE no terminal
 ```
-
-E o `GET /health` responde `consumidor_vivo` de proposito: sem ele, a thread do
-consumidor poderia morrer e o processo seguir respondendo 200 em todas as rotas
-sem processar evento nenhum.
 
 ### Tipagem
 
@@ -499,9 +493,8 @@ mais traicoeiro da migracao: `sys.exit` levanta `SystemExit`, e o modulo
 `threading` trata `SystemExit` como **fim normal** da thread. Numa thread
 secundaria, o processo nao morreria -- a thread do consumidor sumiria sem
 traceback e o servidor HTTP seguiria respondendo 200 sem processar evento
-algum. Hoje so os `if __name__ == "__main__"` traduzem a falha em `sys.exit`, e
-o `GET /health` expoe `consumidor_vivo` justamente porque essa falha e
-invisivel por definicao.
+algum. Por isso so os `if __name__ == "__main__"` traduzem a falha em
+`sys.exit`.
 
 **17. Shutdown via `add_callback_threadsafe`.** E a unica API do
 `BlockingConnection` chamavel de fora da thread dona. Alem disso: a thread do

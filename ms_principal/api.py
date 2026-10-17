@@ -19,7 +19,6 @@ from common.http import (
     cliente as http_cliente,
     com_consumidor,
     criar_app,
-    registrar_health,
 )
 from common.service import EX_ECOMMERCE, BrokerOcupado, PublisherHTTP
 from ms_principal.consumidor import NOME, MsPrincipal
@@ -67,7 +66,6 @@ app = criar_app(
     "API Gateway (ms_principal)",
     lifespan=com_consumidor(MsPrincipal, _ao_subir, _ao_descer),
 )
-registrar_health(app)
 
 
 def _publicar(routing_key: str, payload: dict) -> None:

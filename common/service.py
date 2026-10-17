@@ -253,7 +253,7 @@ class Microservice:
         except (pika.exceptions.AMQPError, AssertionError):
             pass
 
-    def aguardar(self, futuro, intervalo: float = 1.0):
+    def aguardar(self, futuro, intervalo: int = 1):
         """Espera um Future sem deixar a conexao morrer de inanicao.
 
         O BlockingConnection nao tem thread de I/O: os heartbeats so trafegam
