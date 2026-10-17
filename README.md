@@ -44,7 +44,7 @@ regra de negocio entre servicos:
 |---|---|---|---|---|
 | `ms_principal` (gateway) | 8000 | `fila.principal` | `pedido.estoque_ok`, `estoque.indisponivel`, `pagamento.pendente`, `pagamento.aprovado`, `pagamento.recusado`, `pedido.enviado` | `pedido.criado`, `pedido.excluido`, `interesse.promocao` |
 | `ms_estoque` | 8002 | `fila.estoque` | `pedido.criado`, `pedido.excluido` | `pedido.estoque_ok`, `estoque.indisponivel` |
-| `ms_pagamento` | 8003 | `fila.pagamento` | `pedido.estoque_ok` | `pagamento.pendente`, `pagamento.aprovado`, `pagamento.recusado` |
+| `ms_pagamento` | 8003 | `fila.pagamento` | `pedido.estoque_ok`, `pedido.excluido` | `pagamento.pendente`, `pagamento.aprovado`, `pagamento.recusado` |
 | `ms_entrega` | — | `fila.entrega` | `pagamento.aprovado` | `pedido.enviado` |
 | `ms_promocoes` | — | `fila.promocoes` | `interesse.promocao`, `promocao.categoria.*` | `promocao.categoria.{A,B,C}` |
 | `mock_pagamento` | 8004 | — (nao fala AMQP) | — | — |
@@ -68,7 +68,7 @@ Documentacao interativa (gerada pelo FastAPI): <http://localhost:8000/docs>.
 | `GET` | `/api/produtos` | lista produtos **com saldo**, consultando o `ms_estoque` via REST |
 | `POST` | `/api/pedidos` | cria o pedido e publica `pedido.criado` |
 | `GET` | `/api/pedidos?clienteId=` | pedidos do cliente |
-| `DELETE` | `/api/pedidos/{id}` | publica `pedido.excluido` (404 se nao existe, 409 se ja enviado/cancelado) |
+| `DELETE` | `/api/pedidos/{id}` | publica `pedido.excluido` (404 se nao existe, 409 se pagamento ja aprovado, enviado ou cancelado) |
 | `POST` | `/api/interesses` | publica `interesse.promocao` com `acao=registrar` |
 | `DELETE` | `/api/interesses?email=` | publica `interesse.promocao` com `acao=cancelar` |
 | `GET` | `/api/categorias` | categorias disponiveis |
@@ -161,6 +161,13 @@ O `pedido.excluido` sai em quatro situacoes: o usuario exclui pela tela, o
 `ms_estoque` avisa `estoque.indisponivel`, o `ms_pagamento` recusa, ou a
 cobranca nem chega a abrir porque o Mock esta fora. Nos tres ultimos casos quem
 publica e o `ms_principal`, ao consumir o evento.
+
+O `ms_pagamento` tambem ouve o `pedido.excluido`: se a cobranca ainda estiver
+aberta, ele a fecha, e o clique posterior no Mock e descartado sem publicar
+`pagamento.aprovado` -- o pedido excluido nunca chega ao `ms_entrega`. Pelo
+mesmo motivo a exclusao so e aceita ate `AGUARDANDO_PAGAMENTO`: depois da
+aprovacao o evento ja seguiu para a entrega e nao existe estorno. No gateway,
+`ENVIADO` e os `CANCELADO_*` sao estados finais: evento atrasado nao os altera.
 
 Uma diferenca pratica em relacao ao Trab1: la o fluxo inteiro terminava em
 ~15 ms e os estados intermediarios nunca eram vistos. Agora o pedido **para** em
@@ -575,13 +582,11 @@ carregada localmente como um arquivo de configuracao, e e a semente do banco.
 
 ## Limitacoes conhecidas
 
-- **A exclusao pelo usuario nao e coordenada com o pagamento.** A tela recusa
-  excluir um pedido ja `ENVIADO` ou ja cancelado, mas aceita excluir um pedido
-  com pagamento aprovado: o `pedido.excluido` devolve a reserva no estoque e
-  nao existe evento de estorno, entao o pedido fica "cancelado, mas pago".
-- **Eventos que chegam depois do cancelamento sobrescrevem o status.** Se o
-  usuario excluir e um `pagamento.aprovado` ja estiver a caminho, o status
-  exibido deixa de ser "CANCELADO".
+- **Exclusao e clique no Mock quase simultaneos.** Se o webhook chegar ao
+  `ms_pagamento` antes do `pedido.excluido`, o `pagamento.aprovado` sai e o
+  `ms_entrega` envia, enquanto o gateway mantem o pedido como cancelado (estado
+  final). Fechar essa janela exigiria uma saga com compensacao (estorno e
+  cancelamento do envio), fora do escopo do trabalho.
 - **O `PedidoStore` do gateway vive em RAM**: reiniciar o gateway zera a lista
   de pedidos (o enunciado so exige persistencia no `ms_estoque`). O estoque e
   as reservas, esses, sobrevivem.

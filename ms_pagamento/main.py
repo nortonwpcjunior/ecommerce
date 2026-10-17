@@ -54,6 +54,7 @@ class Pendentes:
         self._lock = threading.Lock()
         self._pedidos: dict[str, dict] = {}
         self._resolvidos: set[str] = set()
+        self._cancelados: set[str] = set()
 
     def abrir(self, pedido_id: str, valor: float, itens: list) -> None:
         with self._lock:
@@ -71,6 +72,25 @@ class Pendentes:
             self._resolvidos.add(pedido_id)
             return self._pedidos.pop(pedido_id, {"valor": 0.0, "itens": []})
 
+    def cancelar(self, pedido_id: str) -> bool:
+        """Fecha o pedido SEM decisao, porque ele foi excluido.
+
+        Marca como resolvido: um clique posterior no Mock cai no resolver()
+        e e descartado, e um pedido.estoque_ok atrasado nao reabre a cobranca.
+        Devolve False se a decisao ja tinha saido antes da exclusao.
+        """
+        with self._lock:
+            if pedido_id in self._resolvidos:
+                return False
+            self._resolvidos.add(pedido_id)
+            self._cancelados.add(pedido_id)
+            self._pedidos.pop(pedido_id, None)
+            return True
+
+    def cancelado(self, pedido_id: str) -> bool:
+        with self._lock:
+            return pedido_id in self._cancelados
+
     def conhecido(self, pedido_id: str) -> bool:
         with self._lock:
             return pedido_id in self._pedidos or pedido_id in self._resolvidos
@@ -84,13 +104,24 @@ class MsPagamento(Microservice):
     queue = "fila.pagamento"
     bindings = [
         (EX_ECOMMERCE, Evento.PEDIDO_ESTOQUE_OK),
+        (EX_ECOMMERCE, Evento.PEDIDO_EXCLUIDO),
     ]
 
     @override
     def handle(self, event, payload):
-        if event != Evento.PEDIDO_ESTOQUE_OK:
-            return
+        match event:
+            case Evento.PEDIDO_ESTOQUE_OK:
+                self._abrir_cobranca(payload)
+            case Evento.PEDIDO_EXCLUIDO:
+                self._cancelar_cobranca(payload)
 
+    def _cancelar_cobranca(self, payload):
+        pedido_id = payload["pedidoId"]
+        if PENDENTES.cancelar(pedido_id):
+            log.info(f"{pedido_id} excluido -- cobranca cancelada, "
+                     "o clique no Mock sera ignorado")
+
+    def _abrir_cobranca(self, payload):
         pedido_id = payload["pedidoId"]
         valor = payload.get("total", 0.0)
         itens = payload.get("itens", [])
@@ -182,6 +213,9 @@ def webhook(decisao: Decisao, x_webhook_secret: str = Header(default="")):
         raise HTTPException(400, "status deve ser APROVADO ou RECUSADO")
 
     pedido = PENDENTES.resolver(decisao.pedidoId)
+    if pedido is None and PENDENTES.cancelado(decisao.pedidoId):
+        log.info(f"{decisao.pedidoId} foi excluido -- {status} ignorado")
+        return {"ok": True, "cancelado": True}
     if pedido is None:
         log.info(f"{decisao.pedidoId} ja resolvido -- webhook ignorado")
         return {"ok": True, "duplicata": True}

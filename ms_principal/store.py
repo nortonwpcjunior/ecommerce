@@ -31,12 +31,23 @@ class Status(StrEnum):
     CANCELADO_USUARIO = "CANCELADO_USUARIO", "CANCELADO - excluido pelo usuario"
 
 
-# Estados a partir dos quais o usuario ainda pode excluir o pedido.
+# Estados a partir dos quais o usuario ainda pode excluir o pedido. Com o
+# pagamento aprovado nao da mais: o pagamento.aprovado ja seguiu para o
+# ms_entrega e nao existe evento de estorno.
 EXCLUIVEIS = frozenset({
     Status.AGUARDANDO_ESTOQUE,
     Status.ESTOQUE_RESERVADO,
     Status.AGUARDANDO_PAGAMENTO,
-    Status.PAGAMENTO_APROVADO,
+})
+
+# Estados finais: nenhum evento muda mais o pedido. Sem isso, um evento
+# atrasado (o clique no Mock depois da exclusao, uma reentrega do broker)
+# tiraria o pedido de CANCELADO.
+TERMINAIS = frozenset({
+    Status.ENVIADO,
+    Status.CANCELADO_SEM_ESTOQUE,
+    Status.CANCELADO_PAGAMENTO,
+    Status.CANCELADO_USUARIO,
 })
 
 # Sufixo aleatorio para evitar colisao de IDs entre execucoes.
@@ -68,9 +79,10 @@ class PedidoStore:
             return self._retrato(pedido_id)
 
     def atualizar(self, pedido_id, status, detalhe="", **extras) -> dict | None:
+        """Muda o status. None se o pedido nao existe ou ja esta num estado final."""
         with self._lock:
             pedido = self._pedidos.get(pedido_id)
-            if pedido is None:
+            if pedido is None or pedido["status"] in TERMINAIS:
                 return None
             pedido["status"] = status
             pedido["detalhe"] = detalhe

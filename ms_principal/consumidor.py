@@ -84,10 +84,13 @@ class MsPrincipal(Microservice):
                     f"rastreio {payload.get('rastreio', '?')}"
                 )
 
-        log.info(f"pedido {pedido_id} -> {STORE.rotulo_de(pedido_id)}")
+        if retrato is None:
+            log.info(f"evento {event} ignorado: pedido {pedido_id} ja esta "
+                     f"{STORE.rotulo_de(pedido_id)}")
+            return
 
-        if retrato is not None:
-            BARRAMENTO.publicar(retrato["cliente"], event, retrato)
+        log.info(f"pedido {pedido_id} -> {STORE.rotulo_de(pedido_id)}")
+        BARRAMENTO.publicar(retrato["cliente"], event, retrato)
 
         if cancelar_com is not None:
             self.publish(EX_ECOMMERCE, Evento.PEDIDO_EXCLUIDO, {

@@ -168,6 +168,11 @@ def decidir(cobranca_id: str, status: str):
         log.error(f"webhook falhou: {exc}")
         raise HTTPException(502, f"nao foi possivel avisar a loja: {exc}") from exc
 
+    if resposta.json().get("cancelado"):
+        with _lock:
+            cobranca["decisao"] = "CANCELADO"
+        return {"mensagem": "Este pedido foi cancelado. Nada foi cobrado."}
+
     return {"mensagem": f"Pagamento {status.lower()}. Pode fechar esta aba."}
 
 

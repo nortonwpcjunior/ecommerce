@@ -41,7 +41,7 @@ from ms_promocoes import interesses, notificacao  # noqa: E402
 NOME = "ms_promocoes"
 log = logging.getLogger(NOME)
 
-INTERVALO = int(os.getenv("INTERVALO_PROMOCAO", "8"))  # segundos
+INTERVALO = int(os.getenv("INTERVALO_PROMOCAO", "20"))  # segundos
 DESCONTOS = [5, 10, 15, 20, 25, 30, 40, 50]
 
 _parar = threading.Event()

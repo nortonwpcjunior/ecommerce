@@ -134,7 +134,13 @@ def excluir_pedido(pedido_id: str):
     )
     if retrato is None:
         atual = STORE.status_de(pedido_id)
-        motivo = ("ja foi enviado" if atual == Status.ENVIADO else "ja esta cancelado")
+        match atual:
+            case Status.ENVIADO:
+                motivo = "ja foi enviado"
+            case Status.PAGAMENTO_APROVADO:
+                motivo = "ja teve o pagamento aprovado"
+            case _:
+                motivo = "ja esta cancelado"
         raise HTTPException(409, f"pedido {pedido_id} {motivo}")
 
     _publicar(Evento.PEDIDO_EXCLUIDO, {

@@ -20,7 +20,6 @@ const EXCLUIVEIS = new Set([
   'AGUARDANDO_ESTOQUE',
   'ESTOQUE_RESERVADO',
   'AGUARDANDO_PAGAMENTO',
-  'PAGAMENTO_APROVADO',
 ])
 
 export function Pedidos({ pedidos, aoExcluir }: Props) {
