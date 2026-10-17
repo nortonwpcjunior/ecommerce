@@ -19,6 +19,11 @@ PY=.venv/bin/python
 SERVICOS=(ms_estoque mock_pagamento ms_pagamento ms_entrega ms_promocoes ms_principal)
 
 start() {
+  # Exporta o .env para os servicos filhos (RESEND_API_KEY, SSL_CERT_FILE...).
+  if [ -f .env ]; then
+    set -a; . ./.env; set +a
+    echo "Variaveis carregadas de .env"
+  fi
   mkdir -p logs
   for s in "${SERVICOS[@]}"; do
     if [ -f "logs/$s.pid" ] && kill -0 "$(cat "logs/$s.pid")" 2>/dev/null; then
