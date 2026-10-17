@@ -150,11 +150,11 @@ class Decisao(BaseModel):
     valor: float = 0.0
 
 
-def _abrir_publisher(app, servico):
+def _abrir_publisher(app):
     app.state.publisher = PublisherHTTP(NOME)
 
 
-def _fechar_publisher(app, servico):
+def _fechar_publisher(app):
     app.state.publisher.close()
 
 

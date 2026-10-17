@@ -17,7 +17,7 @@ ARQUIVO = Path(__file__).resolve().parent / "estoque.db"
 
 ESTOQUE_INICIAL = {"P1": 10, "P2": 5, "P3": 0, "P4": 3, "P5": 7, "P6": 2}
 
-ESQUEMA = """
+SCHEMA = """
 CREATE TABLE IF NOT EXISTS produtos (
     id         TEXT PRIMARY KEY,
     nome       TEXT    NOT NULL,
@@ -58,7 +58,7 @@ def conexao() -> sqlite3.Connection:
         conn.execute("PRAGMA busy_timeout=3000")
         # Idempotente, e roda em toda thread: assim um GET /produtos que chegue
         # antes de o consumidor terminar o setup nao encontra tabela faltando.
-        conn.executescript(ESQUEMA)
+        conn.executescript(SCHEMA)
         _local.conn = conn
     return conn
 
