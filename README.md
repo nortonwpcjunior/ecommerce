@@ -235,7 +235,7 @@ Copie `.env.example` para `.env` (ja ignorado pelo git) ou exporte na mao.
 |---|---|---|
 | `RESEND_API_KEY` | *(vazio)* | sem ela, o e-mail entra em **DRY-RUN** e so aparece no log |
 | `RESEND_FROM` | `onboarding@resend.dev` | remetente; o dominio padrao so entrega para o dono da conta |
-| `MOCK_WEBHOOK_SECRET` | `segredo-de-demonstracao` | segredo compartilhado entre o Mock e o webhook |
+| `MOCK_WEBHOOK_SECRET` | `WEBHOOK_SECRET` | segredo compartilhado entre o Mock e o webhook |
 | `INTERVALO_PROMOCAO` | `8` | segundos entre promocoes |
 | `GATEWAY_PORTA` / `PAGAMENTO_PORTA` / `MOCK_PORTA` | `8000` / `8003` / `8004` | portas HTTP |
 | `ESTOQUE_URL` / `MOCK_URL` | `localhost:8002` / `localhost:8004` | enderecos consultados |

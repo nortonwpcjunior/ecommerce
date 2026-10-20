@@ -34,7 +34,7 @@ class Status(StrEnum):
 # Estados a partir dos quais o usuario ainda pode excluir o pedido. Com o
 # pagamento aprovado nao da mais: o pagamento.aprovado ja seguiu para o
 # ms_entrega e nao existe evento de estorno.
-EXCLUIVEIS = frozenset({
+CANCELAVEIS = frozenset({
     Status.AGUARDANDO_ESTOQUE,
     Status.ESTOQUE_RESERVADO,
     Status.AGUARDANDO_PAGAMENTO,
@@ -76,7 +76,7 @@ class PedidoStore:
                 "detalhe": "",
                 "checkoutUrl": "",
             }
-            return self._retrato(pedido_id)
+            return self._snapshot_pedido(pedido_id)
 
     def atualizar(self, pedido_id, status, detalhe="", **extras) -> dict | None:
         """Muda o status. None se o pedido nao existe ou ja esta num estado final."""
@@ -87,7 +87,7 @@ class PedidoStore:
             pedido["status"] = status
             pedido["detalhe"] = detalhe
             pedido.update(extras)
-            return self._retrato(pedido_id)
+            return self._snapshot_pedido(pedido_id)
 
     def atualizar_se(self, pedido_id, permitidos, status, detalhe="") -> dict | None:
         """Transicao atomica: so muda se o estado atual estiver em `permitidos`.
@@ -101,7 +101,7 @@ class PedidoStore:
                 return None
             pedido["status"] = status
             pedido["detalhe"] = detalhe
-            return self._retrato(pedido_id)
+            return self._snapshot_pedido(pedido_id)
 
     def status_de(self, pedido_id) -> "Status | None":
         with self._lock:
@@ -116,17 +116,17 @@ class PedidoStore:
         with self._lock:
             if pedido_id not in self._pedidos:
                 return None
-            return self._retrato(pedido_id)
+            return self._snapshot_pedido(pedido_id)
 
     def listar(self, cliente: str | None = None) -> list[dict]:
         with self._lock:
             return [
-                self._retrato(pid)
+                self._snapshot_pedido(pid)
                 for pid in sorted(self._pedidos)
                 if cliente is None or self._pedidos[pid]["cliente"] == cliente
             ]
 
-    def _retrato(self, pedido_id) -> dict:
+    def _snapshot_pedido(self, pedido_id) -> dict:
         """Copia serializavel do pedido. Chamar sempre COM o lock tomado."""
         pedido = self._pedidos[pedido_id]
         return {

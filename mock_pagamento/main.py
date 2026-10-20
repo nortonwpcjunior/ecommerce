@@ -9,17 +9,16 @@ MS Pagamento por HTTP. O fluxo tem tres passos:
     3. aqui          --POST webhookUrl-->  MS Pagamento  (devolve a decisao)
 """
 
+import httpx
 import logging
 import os
 import secrets
 import sys
 import threading
-from pathlib import Path
-
-import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+from pathlib import Path
 from pydantic import BaseModel
 
 NOME = "mock_pagamento"
@@ -29,7 +28,7 @@ PORTA = int(os.getenv("MOCK_PORTA", "8004"))
 # porta do webhook aprova qualquer pedido -- e o evento resultante sairia
 # ASSINADO pelo ms_pagamento, fazendo a cadeia de assinatura do trabalho
 # atestar um dado forjado.
-SEGREDO = os.getenv("MOCK_WEBHOOK_SECRET", "segredo-de-demonstracao")
+SECRET = os.getenv("MOCK_WEBHOOK_SECRET", "WEBHOOK_SECRET")
 
 log = logging.getLogger(NOME)
 
@@ -158,7 +157,7 @@ def decidir(cobranca_id: str, status: str):
         resposta = httpx.post(
             cobranca["webhookUrl"],
             json=body,
-            headers={"X-Webhook-Secret": SEGREDO},
+            headers={"X-Webhook-Secret": SECRET},
             timeout=5.0,
         )
         resposta.raise_for_status()

@@ -6,18 +6,17 @@ deixa de ser sincrono: o handle() so ABRE a cobranca, e a resposta chega
 depois, por HTTP, na rota do webhook.
 """
 
+import httpx
 import logging
 import os
 import random
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
-from typing import override
-
-import httpx
 from fastapi import Header, HTTPException
+from pathlib import Path
 from pydantic import BaseModel
+from typing import override
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -35,7 +34,7 @@ PORTA = int(os.getenv("PAGAMENTO_PORTA", "8003"))
 
 MOCK_URL = os.getenv("MOCK_URL", "http://localhost:8004")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", f"http://localhost:{PORTA}/webhook/pagamento")
-SECRET = os.getenv("MOCK_WEBHOOK_SECRET", "segredo-de-demonstracao")
+SECRET = os.getenv("MOCK_WEBHOOK_SECRET", "WEBHOOK_SECRET")
 
 log = logging.getLogger(NOME)
 

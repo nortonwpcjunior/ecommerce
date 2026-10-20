@@ -7,12 +7,13 @@ streams SSE de uma vez. A unica `async def` aqui e a do SSE.
 """
 
 import asyncio
+import httpx
 import logging
 import os
-import httpx
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
+
 from common.catalogo import PRODUTOS
 from common.eventos import Evento
 from common.http import (
@@ -23,7 +24,7 @@ from common.http import (
 from common.service import EX_ECOMMERCE, BrokerOcupado, PublisherHTTP
 from ms_principal.consumidor import NOME, MsPrincipal
 from ms_principal.sse import BARRAMENTO, stream
-from ms_principal.store import EXCLUIVEIS, STORE, Status
+from ms_principal.store import CANCELAVEIS, STORE, Status
 
 log = logging.getLogger(NOME)
 
@@ -103,7 +104,7 @@ def criar_pedido(novo: NovoPedido):
     # REGISTRAR ANTES DE PUBLICAR. O pedido.estoque_ok volta em milissegundos e
     # o handle() descarta evento de pedidoId desconhecido -- publicar primeiro
     # perderia o primeiro evento da cadeia.
-    retrato = STORE.registrar(pedido_id, novo.clienteId, itens, total)
+    snapshot_pedido = STORE.registrar(pedido_id, novo.clienteId, itens, total)
 
     _publicar(Evento.PEDIDO_CRIADO, {
         "pedidoId": pedido_id,
@@ -111,8 +112,8 @@ def criar_pedido(novo: NovoPedido):
         "itens": itens,
         "total": total,
     })
-    BARRAMENTO.publicar(novo.clienteId, Evento.PEDIDO_CRIADO, retrato)
-    return retrato
+    BARRAMENTO.publicar(novo.clienteId, Evento.PEDIDO_CRIADO, snapshot_pedido)
+    return snapshot_pedido
 
 
 @app.get("/api/pedidos")
@@ -129,10 +130,10 @@ def excluir_pedido(pedido_id: str):
 
     # Transicao atomica: dois DELETE concorrentes nao podem publicar dois
     # pedido.excluido para o mesmo pedido.
-    retrato = STORE.atualizar_se(
-        pedido_id, EXCLUIVEIS, Status.CANCELADO_USUARIO, "excluido pelo usuario"
+    snapshot_pedido = STORE.atualizar_se(
+        pedido_id, CANCELAVEIS, Status.CANCELADO_USUARIO, "excluido pelo usuario"
     )
-    if retrato is None:
+    if snapshot_pedido is None:
         atual = STORE.status_de(pedido_id)
         match atual:
             case Status.ENVIADO:
@@ -148,8 +149,8 @@ def excluir_pedido(pedido_id: str):
         "motivo": "excluido pelo usuario",
         "origem": "usuario",
     })
-    BARRAMENTO.publicar(retrato["cliente"], Evento.PEDIDO_EXCLUIDO, retrato)
-    return retrato
+    BARRAMENTO.publicar(snapshot_pedido["cliente"], Evento.PEDIDO_EXCLUIDO, snapshot_pedido)
+    return snapshot_pedido
 
 
 @app.post("/api/interesses", status_code=202)
