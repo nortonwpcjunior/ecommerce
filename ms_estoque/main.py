@@ -1,9 +1,3 @@
-"""MS Estoque: consome pedidos, reserva produtos e expoe o saldo por REST.
-
-Duas threads: a do consumidor pika (unica que escreve no SQLite) e a do
-uvicorn, que atende o GET /produtos consultado pelo API Gateway.
-"""
-
 import logging
 import sys
 from pathlib import Path
@@ -51,7 +45,7 @@ class MsEstoque(Microservice):
 
         resultado, faltas = estoque.reservar(pedido_id, itens)
 
-        # Idempotencia: a entrega do RabbitMQ e at-least-once.
+        # Idempotencia
         if resultado is estoque.Resultado.DUPLICATA:
             log.info(f"pedido {pedido_id} ja reservado -- ignorando duplicata")
             return
@@ -98,11 +92,6 @@ app = criar_app("MS Estoque", lifespan=com_consumidor(MsEstoque))
 
 @app.get("/produtos")
 def listar_produtos():
-    """Unico endpoint do estoque: o API Gateway le daqui o saldo real.
-
-    E a excecao que o Trab2 abre a regra do Trab1 de nao haver chamada direta
-    entre processos -- e so leitura, e so o gateway chama.
-    """
     return estoque.listar()
 
 

@@ -1,23 +1,14 @@
-"""MS Pagamento: pede a cobranca ao Mock e recebe a decisao por webhook.
-
-No Trab1 este servico sorteava o resultado (TAXA_APROVACAO). Agora quem
-decide e o usuario, clicando numa aba do Mock de Pagamento -- entao o fluxo
-deixa de ser sincrono: o handle() so ABRE a cobranca, e a resposta chega
-depois, por HTTP, na rota do webhook.
-"""
-
+import httpx
 import logging
 import os
 import random
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
-from typing import override
-
-import httpx
 from fastapi import Header, HTTPException
+from pathlib import Path
 from pydantic import BaseModel
+from typing import override
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -35,20 +26,14 @@ PORTA = int(os.getenv("PAGAMENTO_PORTA", "8003"))
 
 MOCK_URL = os.getenv("MOCK_URL", "http://localhost:8004")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", f"http://localhost:{PORTA}/webhook/pagamento")
-SECRET = os.getenv("MOCK_WEBHOOK_SECRET", "segredo-de-demonstracao")
+SECRET = os.getenv("MOCK_WEBHOOK_SECRET", "WEBHOOK_SECRET")
 
 log = logging.getLogger(NOME)
 
-# Um worker so: a chamada ao Mock sai daqui enquanto a thread do pika fica
-# bombeando a conexao (ver Microservice.aguardar).
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mock")
 
 
 class Pendentes:
-    """Pedidos com cobranca aberta, aguardando o clique do usuario.
-
-    Escrito pela thread do pika e lido pela thread do webhook, dai o lock.
-    """
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -61,11 +46,6 @@ class Pendentes:
             self._pedidos[pedido_id] = {"valor": valor, "itens": itens}
 
     def resolver(self, pedido_id: str) -> dict | None:
-        """Fecha o pedido. Devolve None se ele ja tinha sido resolvido.
-
-        E a idempotencia do webhook: dois cliques no Mock, ou um reenvio da
-        cobranca, nao podem virar dois eventos de pagamento contraditorios.
-        """
         with self._lock:
             if pedido_id in self._resolvidos:
                 return None
@@ -73,12 +53,6 @@ class Pendentes:
             return self._pedidos.pop(pedido_id, {"valor": 0.0, "itens": []})
 
     def cancelar(self, pedido_id: str) -> bool:
-        """Fecha o pedido SEM decisao, porque ele foi excluido.
-
-        Marca como resolvido: um clique posterior no Mock cai no resolver()
-        e e descartado, e um pedido.estoque_ok atrasado nao reabre a cobranca.
-        Devolve False se a decisao ja tinha saido antes da exclusao.
-        """
         with self._lock:
             if pedido_id in self._resolvidos:
                 return False
@@ -133,9 +107,6 @@ class MsPagamento(Microservice):
         PENDENTES.abrir(pedido_id, valor, itens)
 
         try:
-            # A chamada HTTP roda noutra thread e aguardar() mantem a conexao
-            # do pika viva enquanto isso -- sem esse cuidado, o broker
-            # derrubaria a conexao e a mensagem voltaria por redelivery.
             cobranca = self.aguardar(_executor.submit(
                 self._criar_cobranca, pedido_id, valor
             ))
@@ -151,8 +122,6 @@ class MsPagamento(Microservice):
 
         log.info(f"cobranca aberta para {pedido_id}: {cobranca['checkoutUrl']}")
 
-        # O gateway repassa esta URL ao navegador pelo SSE -- e o unico caminho
-        # possivel, ja que o MS Pagamento nao fala com o frontend.
         self.publish(EX_ECOMMERCE, Evento.PAGAMENTO_PENDENTE, {
             "pedidoId": pedido_id,
             "valor": valor,
@@ -196,14 +165,6 @@ app = criar_app(
 
 @app.post("/webhook/pagamento")
 def webhook(decisao: Decisao, x_webhook_secret: str = Header(default="")):
-    """Recebe a decisao do Mock e publica o evento correspondente.
-
-    Rota sincrona (def) de proposito: ela publica no broker, operacao
-    bloqueante, e vai para o threadpool em vez de travar o event loop.
-    """
-    # Sem este confere, qualquer um que alcance a porta aprova qualquer pedido
-    # -- e o evento sairia assinado por este servico, fazendo a cadeia de
-    # assinatura atestar um dado forjado.
     if x_webhook_secret != SECRET:
         log.warning(f"webhook secret invalido para {decisao.pedidoId}")
         raise HTTPException(401, "webhook secret invalido")

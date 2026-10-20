@@ -1,29 +1,11 @@
-"""Integracao com a API externa de e-mail (Resend).
-
-SOBRE A CREDENCIAL
-------------------
-A chave vem SEMPRE da variavel de ambiente RESEND_API_KEY, nunca do codigo
-nem de arquivo versionado. As alternativas usuais nao se aplicam aqui: o
-Resend autentica exclusivamente por API key, nao oferece OAuth, conta de
-servico, IAM role nem credential helper. Entao a variavel de ambiente -- em
-producao, alimentada por um gerenciador de segredos -- e a melhor opcao
-disponivel. O .env esta no .gitignore; o .env.example e versionado sem valor.
-
-Sem a variavel definida, o servico entra em modo DRY-RUN e apenas registra no
-log o e-mail que teria enviado. O sistema roda inteiro sem conta no Resend.
-"""
-
+import httpx
 import logging
 import os
-
-import httpx
 
 log = logging.getLogger(__name__)
 
 API_URL = "https://api.resend.com/emails"
 
-# O dominio onchand.resend.dev so entrega para o dono da conta; para enviar a
-# terceiros e preciso verificar um dominio proprio no painel do Resend.
 REMETENTE = os.getenv("RESEND_FROM", "Promocoes <onboarding@resend.dev>")
 
 
@@ -36,7 +18,6 @@ def modo() -> str:
 
 
 def enviar(cliente: httpx.Client, destinos: list[str], assunto: str, html: str) -> bool:
-    """Dispara um e-mail para a lista. Devolve True se saiu de verdade."""
     if not destinos:
         return False
 
@@ -58,8 +39,6 @@ def enviar(cliente: httpx.Client, destinos: list[str], assunto: str, html: str) 
         )
         resposta.raise_for_status()
     except httpx.HTTPError as exc:
-        # Nao deixamos a excecao subir: ela viraria nack(requeue=False) no
-        # Microservice e a promocao sumiria sem registro nenhum.
         log.error(f"falha ao enviar e-mail via Resend: {exc}")
         return False
 

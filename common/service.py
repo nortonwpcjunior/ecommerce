@@ -2,13 +2,12 @@
 
 import logging
 import os
+import pika
+import pika.exceptions
 import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-
-import pika
-import pika.exceptions
 from pika.adapters.blocking_connection import BlockingChannel
 
 from common.crypto import (
@@ -31,19 +30,11 @@ log = logging.getLogger(__name__)
 
 
 class BrokerIndisponivel(RuntimeError):
-    """O RabbitMQ nao respondeu.
-
-    Nao chamamos sys.exit aqui de proposito. Agora que todo servico tem uma
-    thread do consumidor alem da thread HTTP, um sys.exit fora da thread
-    principal seria ENGOLIDO: o threading trata SystemExit como fim normal da
-    thread, entao o consumidor morreria sem traceback e o servidor HTTP
-    continuaria respondendo 200 sem processar evento nenhum. Quem chama decide
-    o que fazer -- os entrypoints usam encerrar_na_falha().
-    """
+    """O RabbitMQ nao respondeu"""
 
 
 class BrokerOcupado(RuntimeError):
-    """Nao deu para publicar dentro do prazo. Vira HTTP 503."""
+    """Nao deu para publicar"""
 
 
 def configurar_log(nome_processo: str) -> None:
@@ -60,10 +51,6 @@ def keys_dir(nome_processo: str) -> Path:
 
 
 def encerrar_na_falha(funcao):
-    """Executa o entrypoint traduzindo falha de broker em mensagem limpa.
-
-    So pode ser usado na thread principal, que e onde sys.exit funciona.
-    """
     try:
         funcao()
     except BrokerIndisponivel as exc:
@@ -73,7 +60,7 @@ def encerrar_na_falha(funcao):
 
 
 def connect(heartbeat: int = 60) -> tuple[pika.BlockingConnection, BlockingChannel]:
-    """Abre conexao e canal. Levanta BrokerIndisponivel se o broker estiver fora."""
+    """Abre conexao e canal."""
     params = pika.ConnectionParameters(
         host=os.getenv("RABBIT_HOST", "localhost"),
         port=int(os.getenv("RABBIT_PORT", "5672")),
@@ -103,10 +90,10 @@ class Publisher:
     """Publica os eventos assinados"""
 
     def __init__(
-        self,
-        nome: str,
-        canal: BlockingChannel | None = None,
-        confirms: bool = False,
+            self,
+            nome: str,
+            canal: BlockingChannel | None = None,
+            confirms: bool = False,
     ):
         self.nome = nome
         self.signer = Signer(load_private(keys_dir(nome) / f"{nome}.key.pem"))
@@ -155,9 +142,6 @@ class Publisher:
                  f"(hash {sha256_hex(assinados)[:16]})")
 
     def _publicar(self, exchange, routing_key, corpo, propriedades) -> None:
-        # mandatory=True so tem efeito com confirms ligados: sem isso a exchange
-        # direct descarta em silencio o evento que nenhuma fila escuta, e quem
-        # publicou acha que deu certo.
         self._canal.basic_publish(
             exchange, routing_key, corpo, propriedades, mandatory=self._confirms
         )
@@ -171,14 +155,6 @@ class Publisher:
 
 
 class PublisherHTTP:
-    """Publisher para as threads do servidor HTTP.
-
-    O uvicorn atende cada rota numa thread do pool e o BlockingChannel do pika
-    nao e thread-safe, entao toda publicacao passa por um lock -- que cobre
-    tambem a reconexao interna do Publisher, que nao e reentrante. O
-    acquire tem prazo: com o broker fora, a thread que segura o lock fica
-    ~30s no connect, e sem prazo a API inteira congelaria atras dela.
-    """
 
     def __init__(self, nome: str, espera: float = 2.0):
         self._publisher = Publisher(nome, confirms=True)
@@ -242,30 +218,12 @@ class Microservice:
             log.info("encerrado")
 
     def parar(self) -> None:
-        """Pede o fim do consumo A PARTIR DE OUTRA THREAD.
-
-        add_callback_threadsafe e a UNICA api do BlockingConnection que pode
-        ser chamada de fora da thread dona da conexao. Chamar stop_consuming
-        direto daqui corromperia o estado do pika.
-        """
         try:
             self.conexao.add_callback_threadsafe(self.channel.stop_consuming)
         except (pika.exceptions.AMQPError, AssertionError):
             pass
 
     def aguardar(self, futuro, intervalo: int = 1):
-        """Espera um Future sem deixar a conexao morrer de inanicao.
-
-        O BlockingConnection nao tem thread de I/O: os heartbeats so trafegam
-        quando o codigo esta dentro de uma chamada do pika. Uma chamada HTTP
-        feita direto no handle() seguraria a thread por segundos, o broker
-        derrubaria a conexao por timeout e o basic_ack seguinte estouraria --
-        com a mensagem nunca ackada, ela voltaria por redelivery. Bombeando
-        process_data_events a conexao segue viva pelo tempo que precisar.
-
-        So e seguro porque prefetch_count=1: sem outra mensagem em voo, o
-        dispatcher do pika nao reentra no handle().
-        """
         while not futuro.done():
             self.conexao.process_data_events(time_limit=intervalo)
         return futuro.result()

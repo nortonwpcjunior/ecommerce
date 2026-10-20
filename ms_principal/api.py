@@ -1,18 +1,11 @@
-"""A API REST + SSE consumida pelo frontend.
-
-Regra que atravessa o arquivo: rotas que PUBLICAM no broker sao `def`
-(sincronas), porque o pika bloqueia e o Starlette as manda para o threadpool.
-Uma rota `async def` publicando travaria o event loop e congelaria todos os
-streams SSE de uma vez. A unica `async def` aqui e a do SSE.
-"""
-
 import asyncio
+import httpx
 import logging
 import os
-import httpx
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
+
 from common.catalogo import PRODUTOS
 from common.eventos import Evento
 from common.http import (
@@ -23,7 +16,7 @@ from common.http import (
 from common.service import EX_ECOMMERCE, BrokerOcupado, PublisherHTTP
 from ms_principal.consumidor import NOME, MsPrincipal
 from ms_principal.sse import BARRAMENTO, stream
-from ms_principal.store import EXCLUIVEIS, STORE, Status
+from ms_principal.store import CANCELAVEIS, STORE, Status
 
 log = logging.getLogger(NOME)
 
@@ -52,7 +45,6 @@ class Interesse(BaseModel):
 
 
 def _ao_subir(app):
-    # O loop so existe aqui dentro; a thread do pika vai usa-lo para o fan-out.
     BARRAMENTO.ligar(asyncio.get_running_loop())
     app.state.publisher = PublisherHTTP(NOME)
 
@@ -77,7 +69,6 @@ def _publicar(routing_key: str, payload: dict) -> None:
 
 @app.get("/api/produtos")
 def listar_produtos():
-    """Consulta o saldo real direto no MS Estoque, via REST."""
     try:
         resposta = http_cliente.get(f"{ESTOQUE_URL}/produtos")
         resposta.raise_for_status()
@@ -100,10 +91,7 @@ def criar_pedido(novo: NovoPedido):
     )
     pedido_id = STORE.novo_id()
 
-    # REGISTRAR ANTES DE PUBLICAR. O pedido.estoque_ok volta em milissegundos e
-    # o handle() descarta evento de pedidoId desconhecido -- publicar primeiro
-    # perderia o primeiro evento da cadeia.
-    retrato = STORE.registrar(pedido_id, novo.clienteId, itens, total)
+    snapshot_pedido = STORE.registrar(pedido_id, novo.clienteId, itens, total)
 
     _publicar(Evento.PEDIDO_CRIADO, {
         "pedidoId": pedido_id,
@@ -111,8 +99,8 @@ def criar_pedido(novo: NovoPedido):
         "itens": itens,
         "total": total,
     })
-    BARRAMENTO.publicar(novo.clienteId, Evento.PEDIDO_CRIADO, retrato)
-    return retrato
+    BARRAMENTO.publicar(novo.clienteId, Evento.PEDIDO_CRIADO, snapshot_pedido)
+    return snapshot_pedido
 
 
 @app.get("/api/pedidos")
@@ -127,12 +115,10 @@ def excluir_pedido(pedido_id: str):
     if STORE.obter(pedido_id) is None:
         raise HTTPException(404, f"pedido nao encontrado: {pedido_id}")
 
-    # Transicao atomica: dois DELETE concorrentes nao podem publicar dois
-    # pedido.excluido para o mesmo pedido.
-    retrato = STORE.atualizar_se(
-        pedido_id, EXCLUIVEIS, Status.CANCELADO_USUARIO, "excluido pelo usuario"
+    snapshot_pedido = STORE.atualizar_se(
+        pedido_id, CANCELAVEIS, Status.CANCELADO_USUARIO, "excluido pelo usuario"
     )
-    if retrato is None:
+    if snapshot_pedido is None:
         atual = STORE.status_de(pedido_id)
         match atual:
             case Status.ENVIADO:
@@ -148,8 +134,8 @@ def excluir_pedido(pedido_id: str):
         "motivo": "excluido pelo usuario",
         "origem": "usuario",
     })
-    BARRAMENTO.publicar(retrato["cliente"], Evento.PEDIDO_EXCLUIDO, retrato)
-    return retrato
+    BARRAMENTO.publicar(snapshot_pedido["cliente"], Evento.PEDIDO_EXCLUIDO, snapshot_pedido)
+    return snapshot_pedido
 
 
 @app.post("/api/interesses", status_code=202)
@@ -182,7 +168,6 @@ def listar_categorias():
 
 @app.get("/api/eventos/{cliente_id}")
 async def eventos(cliente_id: str):
-    """Canal SSE: toda mudanca de estado dos pedidos deste cliente."""
     return StreamingResponse(
         stream(cliente_id),
         media_type="text/event-stream",

@@ -1,19 +1,3 @@
-"""MS Promocoes: cadastra interesses e notifica por e-mail.
-
-Diferente do Trab1, onde era um produtor puro. Agora e um Microservice com
-UMA fila e DOIS bindings, em exchanges diferentes:
-
-    (eCommerce, interesse.promocao)   -> cadastra/remove e-mail e categorias
-    (Promocoes, promocao.categoria.*) -> dispara o e-mail aos interessados
-
-Mais uma thread geradora que publica promocao.categoria.{A,B,C} no topic
-exchange. Ou seja: ele consome a propria promocao que acabou de publicar.
-Parece volta desnecessaria, mas e o que mantem geracao e notificacao
-desacopladas -- e o que preserva o topic exchange e o curinga, que os
-consumidores C1/C2 do Trab1 demonstravam e que sairam da arquitetura do
-Trab2.
-"""
-
 import logging
 import os
 import random
@@ -53,12 +37,8 @@ class MsPromocoes(Microservice):
     queue = "fila.promocoes"
     bindings = [
         (EX_ECOMMERCE, Evento.INTERESSE_PROMOCAO),
-        # O curinga casa exatamente uma palavra, entao cobre qualquer
-        # categoria -- inclusive as que venham a existir.
         (EX_PROMOCOES, "promocao.categoria.*"),
     ]
-    # A fila e duravel: sem TTL, o gerador parado por horas acumularia
-    # promocoes velhas e viraria uma enxurrada de e-mails no restart.
     queue_args = {"x-message-ttl": 60_000, "x-max-length": 100}
 
     def setup(self):
@@ -71,7 +51,7 @@ class MsPromocoes(Microservice):
     def handle(self, event, payload):
         if event == Evento.INTERESSE_PROMOCAO:
             self._interesse(payload)
-        else:  # promocao.categoria.X
+        else:
             self._promocao(event, payload)
 
     @staticmethod
@@ -106,15 +86,12 @@ class MsPromocoes(Microservice):
 
         assunto = (f"{payload['descontoPct']}% OFF em {payload['nome']}")
         html = notificacao.montar_html(payload)
-        # Fora da thread do pika, com a conexao sendo bombeada: uma chamada
-        # lenta ao Resend nao pode derrubar a conexao com o broker.
         self.aguardar(_executor.submit(
             notificacao.enviar, cliente, destinos, assunto, html
         ))
 
 
 def gerar_promocoes():
-    """Thread produtora: Publisher PROPRIO, nunca o canal do consumidor."""
     publisher = Publisher(NOME)
     log.info(f"publicando em {EX_PROMOCOES} a cada {INTERVALO}s")
     try:
@@ -136,7 +113,6 @@ def gerar_promocoes():
                     "precoPromocional": preco_final,
                 },
             )
-            # wait(), nao sleep(): o shutdown nao espera o intervalo inteiro.
             _parar.wait(INTERVALO)
     finally:
         publisher.close()

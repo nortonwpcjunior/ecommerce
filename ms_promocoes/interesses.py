@@ -1,9 +1,3 @@
-"""Registro de quem quer receber promocoes, por categoria.
-
-Arquivo JSON simples: so a thread do consumidor escreve, e o volume e de
-dezenas de linhas. Fica fora do git (tem e-mail de gente dentro).
-"""
-
 import json
 import logging
 from pathlib import Path
@@ -12,7 +6,6 @@ ARQUIVO = Path(__file__).resolve().parent / "interesses.json"
 
 log = logging.getLogger(__name__)
 
-# email -> [categorias]
 _registro: dict[str, list[str]] = {}
 
 

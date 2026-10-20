@@ -1,35 +1,18 @@
-"""Mock de Pagamento: o provedor de pagamentos externo.
-
-Nao importa nada de common/, nao tem chave privada e nao fala com o RabbitMQ.
-Isso e proposital: ele representa um sistema de TERCEIROS, que so conhece o
-MS Pagamento por HTTP. O fluxo tem tres passos:
-
-    1. MS Pagamento  --POST /cobrancas-->  aqui          (cria a cobranca)
-    2. usuario       --GET  /checkout/X->  aqui          (abre a aba e decide)
-    3. aqui          --POST webhookUrl-->  MS Pagamento  (devolve a decisao)
-"""
-
+import httpx
 import logging
 import os
 import secrets
 import sys
 import threading
-from pathlib import Path
-
-import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+from pathlib import Path
 from pydantic import BaseModel
 
 NOME = "mock_pagamento"
 PORTA = int(os.getenv("MOCK_PORTA", "8004"))
-
-# Segredo compartilhado com o MS Pagamento. Sem ele, qualquer um que alcance a
-# porta do webhook aprova qualquer pedido -- e o evento resultante sairia
-# ASSINADO pelo ms_pagamento, fazendo a cadeia de assinatura do trabalho
-# atestar um dado forjado.
-SEGREDO = os.getenv("MOCK_WEBHOOK_SECRET", "segredo-de-demonstracao")
+SECRET = os.getenv("MOCK_WEBHOOK_SECRET", "WEBHOOK_SECRET")
 
 log = logging.getLogger(NOME)
 
@@ -47,14 +30,13 @@ class Cobranca(BaseModel):
 
 @app.post("/cobrancas")
 def criar_cobranca(cobranca: Cobranca):
-    """Passo 1: o MS Pagamento pede a cobranca e recebe a URL de checkout."""
     cobranca_id = secrets.token_hex(8)
     with _lock:
         _cobrancas[cobranca_id] = {
             "pedidoId": cobranca.pedidoId,
             "valor": cobranca.valor,
             "webhookUrl": cobranca.webhookUrl,
-            "decisao": None,
+            "decisao": None
         }
     log.info(f"cobranca {cobranca_id} criada para {cobranca.pedidoId} "
              f"(R$ {cobranca.valor:.2f})")
@@ -119,7 +101,6 @@ async function decidir(status) {{
 
 @app.get("/checkout/{cobranca_id}", response_class=HTMLResponse)
 def checkout(cobranca_id: str):
-    """Passo 2: a pagina que o usuario abre em nova aba."""
     with _lock:
         cobranca = _cobrancas.get(cobranca_id)
     if cobranca is None:
@@ -133,7 +114,6 @@ def checkout(cobranca_id: str):
 
 @app.post("/checkout/{cobranca_id}/decidir")
 def decidir(cobranca_id: str, status: str):
-    """Passo 3: dispara o webhook de volta para o MS Pagamento."""
     status = status.upper()
     if status not in ("APROVADO", "RECUSADO"):
         raise HTTPException(400, "status deve ser APROVADO ou RECUSADO")
@@ -158,7 +138,7 @@ def decidir(cobranca_id: str, status: str):
         resposta = httpx.post(
             cobranca["webhookUrl"],
             json=body,
-            headers={"X-Webhook-Secret": SEGREDO},
+            headers={"X-Webhook-Secret": SECRET},
             timeout=5.0,
         )
         resposta.raise_for_status()

@@ -1,15 +1,8 @@
-"""A thread consumidora do API Gateway: evento do broker -> estado -> SSE.
-
-E o "tradutor de eventos" da Figura 1. Cada evento que chega do RabbitMQ
-atualiza o pedido e e reemitido ao navegador do dono daquele pedido.
-"""
-
 import logging
 from typing import override
 
 from common.eventos import Evento
 from common.service import EX_ECOMMERCE, Microservice
-
 from ms_principal.sse import BARRAMENTO
 from ms_principal.store import STORE, Status
 
@@ -34,8 +27,6 @@ class MsPrincipal(Microservice):
     def handle(self, event, payload):
         pedido_id = payload["pedidoId"]
 
-        # O gateway e a unica origem de pedidos: um pedidoId que ele nao criou
-        # nunca vira um pedido na lista de alguem.
         if STORE.status_de(pedido_id) is None:
             log.warning(f"evento {event} para pedido desconhecido {pedido_id} "
                         "-- ignorado")

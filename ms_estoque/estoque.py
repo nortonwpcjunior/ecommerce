@@ -1,11 +1,3 @@
-"""Persistencia do estoque em SQLite.
-
-O Trab1 guardava o saldo num dict em RAM: reiniciar o processo devolvia tudo
-ao valor inicial. O Trab2 pede persistencia, e passa a existir um segundo
-leitor -- as threads do servidor HTTP que atendem GET /produtos enquanto a
-thread do pika escreve.
-"""
-
 import sqlite3
 import threading
 from enum import StrEnum
@@ -41,9 +33,6 @@ class Resultado(StrEnum):
     SEM_ESTOQUE = "sem_estoque"
 
 
-# Uma conexao POR THREAD. Compartilhar uma conexao entre threads
-# compartilharia tambem o estado da transacao: uma leitura da thread HTTP
-# enxergaria a transacao aberta pela thread do pika.
 _local = threading.local()
 
 
@@ -52,19 +41,15 @@ def conexao() -> sqlite3.Connection:
     if conn is None:
         conn = sqlite3.connect(ARQUIVO, isolation_level=None)
         conn.row_factory = sqlite3.Row
-        # WAL: um escritor (pika) e N leitores (HTTP) sem bloqueio mutuo.
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA busy_timeout=3000")
-        # Idempotente, e roda em toda thread: assim um GET /produtos que chegue
-        # antes de o consumidor terminar o setup nao encontra tabela faltando.
         conn.executescript(SCHEMA)
         _local.conn = conn
     return conn
 
 
 def inicializar() -> bool:
-    """Semeia o catalogo no primeiro boot. Devolve True se semeou agora."""
     conn = conexao()
     if conn.execute("SELECT COUNT(*) FROM produtos").fetchone()[0]:
         return False
@@ -94,10 +79,7 @@ def saldos() -> dict[str, int]:
 
 
 def reservar(pedido_id: str, itens: list[dict]) -> tuple[Resultado, list[str]]:
-    """Reserva todos os itens ou nenhum, numa unica transacao."""
     conn = conexao()
-    # IMMEDIATE pega o lock de escrita ja na abertura: o verifica-depois-baixa
-    # nao pode ser interrompido no meio.
     conn.execute("BEGIN IMMEDIATE")
     try:
         ja_existe = conn.execute(
@@ -137,7 +119,6 @@ def reservar(pedido_id: str, itens: list[dict]) -> tuple[Resultado, list[str]]:
 
 
 def devolver(pedido_id: str) -> list[dict]:
-    """Devolve a reserva ao estoque. Lista vazia se nao havia reserva."""
     conn = conexao()
     conn.execute("BEGIN IMMEDIATE")
     try:
